@@ -3,7 +3,9 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import * as api from "$lib/api/client";
+  import { updater } from "$lib/stores/updater.svelte";
 
   let { children } = $props();
 
@@ -15,11 +17,16 @@
   // The tray Help menu asks the app to navigate (e.g. to the uninstall section).
   // Handled here in the root layout so it works from whatever route is showing.
   onMount(() => {
+    // Only the dashboard window polls for updates; onboarding lacks the capability.
+    if (getCurrentWindow().label === "dashboard") updater.start();
     const stops = [
       listen<string>("nav", (e) => void goto(e.payload)),
       listen("close:prompt", () => (askClose = true)),
     ];
-    return () => stops.forEach((s) => void s.then((f) => f()));
+    return () => {
+      updater.stop();
+      stops.forEach((s) => void s.then((f) => f()));
+    };
   });
 
   async function choose(behavior: "menuBar" | "quit") {

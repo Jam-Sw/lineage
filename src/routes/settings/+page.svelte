@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
+  import { getVersion } from "@tauri-apps/api/app";
   import * as api from "$lib/api/client";
+  import { updater } from "$lib/stores/updater.svelte";
   import type { AppSettings, AppearanceSettings, AuthStatus } from "$lib/api/types";
 
   let settings = $state<AppSettings | null>(null);
@@ -11,6 +13,7 @@
   let cache = $state("…");
   let busy = $state(false);
   let error = $state<string | null>(null);
+  let appVersion = $state("");
 
   const ISSUES_URL = "https://github.com/Jam-Sw/lineage/issues";
 
@@ -30,6 +33,7 @@
     appearance = await api.getAppearance();
     auth = await api.authStatus();
     void refreshCache();
+    appVersion = await getVersion();
     // Opened from the tray Help menu: bring the uninstall area into view.
     if (location.hash === "#uninstall") {
       setTimeout(
@@ -239,6 +243,27 @@
       <button onclick={() => save(false)} disabled={busy}>Save</button>
       <button class="primary" onclick={() => save(true)} disabled={busy}>Save &amp; re-sync</button>
     </div>
+
+    <section>
+      <h2>About</h2>
+      <p class="small">Lineage <b>v{appVersion}</b></p>
+      {#if updater.status === "available"}
+        <p class="small">Version <b>{updater.version}</b> is available.</p>
+        <button class="primary" onclick={() => updater.downloadAndInstall()}>Download &amp; install</button>
+      {:else if updater.status === "downloading"}
+        <p class="small">
+          Downloading{updater.progress != null ? ` ${Math.round(updater.progress * 100)}%` : "…"}
+        </p>
+      {:else if updater.status === "ready"}
+        <p class="small">Update downloaded.</p>
+        <button class="primary" onclick={() => updater.restart()}>Restart to finish</button>
+      {:else}
+        <button onclick={() => updater.checkNow()} disabled={updater.status === "checking"}>
+          {updater.status === "checking" ? "Checking…" : "Check for updates"}
+        </button>
+      {/if}
+      {#if updater.error}<p class="remove">{updater.error}</p>{/if}
+    </section>
 
     <section id="uninstall">
       <h2>Help</h2>
