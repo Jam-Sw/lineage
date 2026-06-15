@@ -26,8 +26,8 @@
         "label": "onboarding",
         "title": "Lineage",
         "url": "/onboarding",
-        "width": 520,
-        "height": 580,
+        "width": 780,
+        "height": 400,
         "resizable": false,
         "visible": false
       }

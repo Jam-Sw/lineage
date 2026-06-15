@@ -10,9 +10,11 @@
     RepoStat,
     AppearanceSettings,
     ProfileStats,
+    AppSettings,
   } from "$lib/api/types";
   import { commas, signed, relativeTime } from "$lib/format";
   import LiveReveal from "$lib/components/LiveReveal.svelte";
+  import FirstRunTour from "$lib/components/FirstRunTour.svelte";
   import LanguageBars from "$lib/components/LanguageBars.svelte";
   import Treemap from "$lib/components/Treemap.svelte";
   import ImpactTree from "$lib/components/ImpactTree.svelte";
@@ -34,6 +36,8 @@
     trayMetric: "net",
     barStyle: "language",
   });
+
+  let settings = $state<AppSettings | null>(null);
 
   let sortKey = $state<"net" | "added" | "removed" | "name">("net");
   let sortDir = $state<1 | -1>(-1);
@@ -109,9 +113,20 @@
     });
   });
 
+  // First-run tour shows once, on the first real dashboard (a snapshot exists, so
+  // the pages and Sync button are actually present to point at).
+  const showTour = $derived(phase === "dashboard" && !!settings && !settings.seenTour);
+
+  function dismissTour() {
+    if (!settings) return;
+    settings = { ...settings, seenTour: true };
+    void api.setSettings(settings); // cosmetic field: does not clear the churn cache
+  }
+
   async function load() {
     auth = await api.authStatus();
     appearance = await api.getAppearance();
+    settings = await api.getSettings();
     snapshot = await api.getSnapshot();
     profile = await api.getProfile();
     // No cached contributions graph yet (and not mid-sync): fetch it on demand.
@@ -263,23 +278,49 @@
     <button class:active={page === 0} onclick={() => goPage(0)} title="Dashboard" aria-label="Dashboard"></button>
     <button class:active={page === 1} onclick={() => goPage(1)} title="Impact tree" aria-label="Impact tree"></button>
   </div>
+
+  {#if showTour}
+    <FirstRunTour ondone={dismissTour} />
+  {/if}
 {:else}
   <main class:wide={phase === "live"}>
     {#if phase === "connect"}
       <div class="empty">
         <h1>Lineage</h1>
-        <p class="dim">Connect your GitHub account to see your Lineage.</p>
+        <p class="lead">
+          Your whole coding lifetime on one page - every line you have ever added and removed
+          on GitHub, counted and broken down by language.
+        </p>
+        <p class="dim">
+          To build it, Lineage asks GitHub for read-only access to your repositories, downloads
+          them to this Mac, and counts your lines right here. It talks only to GitHub - never to
+          a server of ours - and nothing you own is ever uploaded. Your access token is kept in
+          the macOS Keychain, and you can disconnect or fully uninstall anytime.
+        </p>
         <button class="primary" onclick={() => api.openOnboarding()}>Connect GitHub</button>
+        <p class="fineprint">Read-only · your code never leaves your Mac</p>
       </div>
     {:else if phase === "firstrun"}
-      <div class="empty">
-        <h1>Ready</h1>
-        <p class="dim">
-          Lineage will clone your repositories and tally every line you have written. The
-          first run takes a few minutes; after that, re-syncs are fast.
+      <div class="empty firstrun">
+        <div class="zeros" aria-hidden="true">
+          <div class="znet mono">0</div>
+          <div class="zsub">
+            <span class="add">+0</span>
+            <span class="remove">−0</span>
+            <span class="dim">· 0 commits · 0 repos · 0 languages</span>
+          </div>
+        </div>
+        <p class="lead">
+          This is your Lineage - empty, for now. Press <strong>GO</strong> and Lineage
+          counts every line you have ever added and removed across your GitHub.
+        </p>
+        <p class="dim small">
+          The first run clones your repos and tallies them locally, so it takes a few minutes;
+          later re-syncs only fetch what changed.
         </p>
         {#if error}<p class="remove">{error}</p>{/if}
-        <button class="primary" onclick={doSync}>Compute my Lineage</button>
+        <button class="primary go" onclick={doSync}>GO</button>
+        <p class="fineprint">Read-only · your code never leaves your Mac</p>
       </div>
     {:else if phase === "live"}
       <LiveReveal
@@ -379,8 +420,56 @@
   .empty h1 {
     margin: 0 0 6px;
   }
+  .empty p {
+    margin: 10px 0 0;
+  }
+  .empty .lead {
+    font-size: 14px;
+    line-height: 1.55;
+  }
   .empty button {
     margin-top: 18px;
+  }
+  .empty .fineprint {
+    margin-top: 14px;
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+  /* First run: a faint zero Lineage, waiting to be filled - the GO button
+     is the obvious next move. */
+  .firstrun {
+    margin-top: 13vh;
+    max-width: 520px;
+  }
+  .zeros {
+    margin-bottom: 22px;
+  }
+  .znet {
+    font-size: 88px;
+    font-weight: 800;
+    line-height: 1;
+    letter-spacing: var(--track-display);
+    color: var(--text-faint);
+  }
+  .zsub {
+    margin-top: 12px;
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 13px;
+    opacity: 0.55;
+  }
+  .empty .small {
+    font-size: 12px;
+  }
+  .go {
+    margin-top: 22px;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    padding: 13px 46px;
   }
   header {
     display: flex;

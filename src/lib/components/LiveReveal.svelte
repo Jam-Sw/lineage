@@ -36,18 +36,55 @@
     feed: FeedItem[];
   } = $props();
 
-  // Animated count-up toward the running net, restarted each tick.
-  let display = $state(0);
+  // Animated count-up toward the running totals. Repos arrive one tick at a
+  // time and a slow clone can be seconds apart, so a fixed-duration count-up
+  // would reach the number and then sit frozen until the next repo. Instead we
+  // measure the real gap between ticks and stretch each count-up across (a touch
+  // beyond) that gap, moving near-linearly. The headline then streams upward at
+  // the true rate - a constant flow rather than bursts followed by a freeze.
+  let dNet = $state(0);
+  let dAdded = $state(0);
+  let dRemoved = $state(0);
+  let dCommits = $state(0);
+
+  // Smoothed milliseconds between repo ticks, seeded with a sane first guess.
+  let gap = 700;
+  let lastDone = -1;
+  let lastTickAt = 0;
+
   $effect(() => {
-    const to = net;
-    const from = untrack(() => display);
-    const start = performance.now();
-    const dur = 420;
+    // Reading the targets registers them as deps, so this re-runs on every tick.
+    const toNet = net,
+      toAdded = added,
+      toRemoved = removed,
+      toCommits = commits;
+
+    const now = performance.now();
+    if (done !== lastDone) {
+      if (lastTickAt) {
+        const observed = Math.min(Math.max(now - lastTickAt, 120), 6000);
+        gap = gap * 0.55 + observed * 0.45;
+      }
+      lastTickAt = now;
+      lastDone = done;
+    }
+
+    const fromNet = untrack(() => dNet);
+    const fromAdded = untrack(() => dAdded);
+    const fromRemoved = untrack(() => dRemoved);
+    const fromCommits = untrack(() => dCommits);
+
+    // Stretch a little past the measured gap so we are usually still moving when
+    // the next repo lands; clamp so fast (cached) and very slow repos stay sane.
+    const dur = Math.min(5000, Math.max(280, gap * 1.2));
+    const start = now;
     let raf = 0;
     const step = (t: number) => {
-      const k = Math.min(1, (t - start) / dur);
-      const eased = 1 - Math.pow(1 - k, 3);
-      display = Math.round(from + (to - from) * eased);
+      const k = Math.min(1, (t - start) / dur); // linear: steady stream
+      dNet = Math.round(fromNet + (toNet - fromNet) * k);
+      dAdded = Math.round(fromAdded + (toAdded - fromAdded) * k);
+      dRemoved = Math.round(fromRemoved + (toRemoved - fromRemoved) * k);
+      dCommits = Math.round(fromCommits + (toCommits - fromCommits) * k);
       if (k < 1) raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
@@ -59,11 +96,11 @@
 
 <div class="reveal">
   <div class="head">
-    <div class="big mono {display >= 0 ? 'add' : 'remove'}">{signed(display)}</div>
+    <div class="big mono {dNet >= 0 ? 'add' : 'remove'}">{signed(dNet)}</div>
     <div class="subline">
-      <span class="add">+{commas(added)}</span>
-      <span class="remove">−{commas(removed)}</span>
-      <span class="dim">· {commas(commits)} commits, building your Lineage…</span>
+      <span class="add">+{commas(dAdded)}</span>
+      <span class="remove">−{commas(dRemoved)}</span>
+      <span class="dim">· {commas(dCommits)} commits, building your Lineage…</span>
     </div>
     <div class="prog">
       <div class="track" class:indeterminate={!total}>

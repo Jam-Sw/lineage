@@ -15,16 +15,20 @@ use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 const REPO_URL: &str = "https://github.com/Jam-Sw/lineage";
+const BUNDLE_ID: &str = "com.lineage.app";
 
 struct AppState {
     store: Mutex<Store>,
     cache_dir: PathBuf,
     syncing: AtomicBool,
+    /// True while the menu-bar spinner thread should keep animating.
+    animating: AtomicBool,
 }
 
 #[derive(Clone, Serialize)]
@@ -195,10 +199,19 @@ fn set_settings(
 ) -> CmdResult<AppSettings> {
     {
         let s = store_lock(&state)?;
+        // Scope/filter affect every repo's churn, so invalidate the cache when any
+        // of them changed: the next sync recomputes from clones (which are kept)
+        // under the new settings. Cosmetic fields (e.g. seen_tour) leave it intact.
+        let prev = s.get_settings()?;
+        let scope_changed = prev.include_forks != settings.include_forks
+            || prev.owner_only != settings.owner_only
+            || prev.include_archived != settings.include_archived
+            || prev.exclude_generated != settings.exclude_generated
+            || prev.extra_emails != settings.extra_emails;
         s.set_settings(&settings)?;
-        // Scope/filter affect every repo's churn, so invalidate the cache: the next
-        // sync recomputes from clones (which are kept) under the new settings.
-        s.clear_repo_cache()?;
+        if scope_changed {
+            s.clear_repo_cache()?;
+        }
     }
     let _ = app.emit("settings:changed", &settings);
     Ok(settings)
@@ -304,6 +317,27 @@ fn open_data_folder(app: AppHandle) {
     }
 }
 
+/// Record and carry out the user's answer to the first-close prompt: keep running
+/// in the menu bar (hide the window) or quit the app entirely. `close_behavior` is
+/// a cosmetic field, so this writes settings directly and never clears the churn
+/// cache. Any value other than "quit" is treated as the menu-bar choice.
+#[tauri::command]
+fn resolve_close(state: State<'_, AppState>, app: AppHandle, behavior: String) -> CmdResult<()> {
+    let quit = behavior == "quit";
+    {
+        let s = store_lock(&state)?;
+        let mut settings = s.get_settings()?;
+        settings.close_behavior = if quit { "quit".into() } else { "menuBar".into() };
+        s.set_settings(&settings)?;
+    }
+    if quit {
+        app.exit(0);
+    } else if let Some(w) = app.get_webview_window("dashboard") {
+        let _ = w.hide();
+    }
+    Ok(())
+}
+
 #[tauri::command]
 fn cache_info(state: State<'_, AppState>) -> CmdResult<String> {
     Ok(human_size(dir_size(&state.cache_dir)))
@@ -313,6 +347,66 @@ fn cache_info(state: State<'_, AppState>) -> CmdResult<String> {
 fn clear_cache(state: State<'_, AppState>) -> CmdResult<()> {
     store_lock(&state)?.clear_repo_cache()?;
     let _ = std::fs::remove_dir_all(&state.cache_dir);
+    Ok(())
+}
+
+/// Completely and cleanly uninstall Lineage: drop the GitHub token from the
+/// Keychain, delete every file the app scattered across `~/Library` (clones,
+/// SQLite cache, WebKit/caches/saved-state - the cruft macOS otherwise leaves
+/// behind), move the app bundle to the Trash, and quit.
+///
+/// The bundle removal is deferred to a detached helper that waits for this
+/// process to exit, since a running app cannot cleanly delete its own bundle.
+/// The GitHub account itself is never touched - only the local token copy.
+#[tauri::command]
+fn uninstall_app(app: AppHandle) -> CmdResult<()> {
+    // 1. The token in the macOS Keychain.
+    let _ = TokenStore::clear();
+
+    // 2. App data (bare clones + SQLite) and the rest of the per-bundle footprint.
+    if let Ok(dir) = app.path().app_data_dir() {
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+    if let Ok(home) = app.path().home_dir() {
+        for rel in [
+            format!("Library/Caches/{BUNDLE_ID}"),
+            format!("Library/WebKit/{BUNDLE_ID}"),
+            format!("Library/HTTPStorages/{BUNDLE_ID}"),
+            format!("Library/Saved Application State/{BUNDLE_ID}.savedState"),
+            format!("Library/Preferences/{BUNDLE_ID}.plist"),
+        ] {
+            let p = home.join(rel);
+            let _ = std::fs::remove_file(&p);
+            let _ = std::fs::remove_dir_all(&p);
+        }
+    }
+
+    // 3. Move the .app bundle to the Trash once we have exited. Skip in dev,
+    //    where the binary lives under target/ and not inside a .app.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(bundle) = exe.ancestors().nth(3) {
+            if bundle.extension().and_then(|e| e.to_str()) == Some("app") {
+                let pid = std::process::id();
+                let bundle = bundle.to_string_lossy().replace('"', "");
+                // Move to the user's Trash (recoverable, no Finder-automation
+                // prompt); fall back to a hard delete if the move fails (e.g. a
+                // cross-volume install) so the bundle is gone either way.
+                let script = format!(
+                    "while kill -0 {pid} 2>/dev/null; do sleep 0.2; done; \
+                     name=\"$(basename \"{bundle}\")\"; \
+                     rm -rf \"$HOME/.Trash/$name\"; \
+                     mv \"{bundle}\" \"$HOME/.Trash/\" 2>/dev/null || rm -rf \"{bundle}\""
+                );
+                let _ = std::process::Command::new("/bin/bash")
+                    .arg("-c")
+                    .arg(script)
+                    .spawn();
+            }
+        }
+    }
+
+    // 4. Quit; the detached helper trashes the bundle right after we go.
+    app.exit(0);
     Ok(())
 }
 
@@ -395,6 +489,12 @@ fn spawn_sync(app: AppHandle) -> bool {
         // Mark "syncing" right away (before the ~2s of API discovery) so a window
         // opening now goes straight into the live reveal instead of the first-run screen.
         let _ = state.store.lock().map(|s| s.sync_begin(0));
+        // Spin the menu-bar icon for the duration so the tray reads as "working"
+        // instead of a static glyph. One animator at a time.
+        if !state.animating.swap(true, Ordering::SeqCst) {
+            let anim_app = app.clone();
+            std::thread::spawn(move || animate_tray(anim_app));
+        }
     }
     // Immediate feedback: the token read + discovery can take a few seconds (and a
     // first run may block on a Keychain prompt), so signal motion right now.
@@ -403,6 +503,14 @@ fn spawn_sync(app: AppHandle) -> bool {
         let result = run_sync(&app);
         let state = app.state::<AppState>();
         state.syncing.store(false, Ordering::SeqCst);
+        // Stop the spinner, then let its loop observe the flag and exit (one frame
+        // is ~110ms) so it queues no more icon swaps. Restoring the real icon goes
+        // through the main thread too, so it lands after any pending spinner frame
+        // (FIFO) and can't be clobbered by a trailing frame.
+        state.animating.store(false, Ordering::SeqCst);
+        std::thread::sleep(Duration::from_millis(160));
+        let a = app.clone();
+        let _ = app.run_on_main_thread(move || refresh_tray(&a));
         if let Err(e) = result {
             if let Ok(s) = state.store.lock() {
                 let _ = s.sync_error(&e.to_string());
@@ -510,7 +618,7 @@ fn run_sync(app: &AppHandle) -> lineage_core::Result<()> {
         last_synced_at,
     };
     lock_store(&state)?.set_snapshot(&snapshot)?;
-    refresh_tray(app);
+    // The tray icon + title are refreshed by spawn_sync once the spinner stops.
     let _ = app.emit("sync:done", &snapshot);
     Ok(())
 }
@@ -537,8 +645,44 @@ fn show_window(app: &AppHandle, label: &str) {
     }
 }
 
+/// What closing the dashboard window should do, read from saved settings.
+enum CloseChoice {
+    /// First close: ask the user (handled by the in-app modal).
+    Ask,
+    /// Idle to the menu bar (hide the window) - the menu-bar-app norm.
+    MenuBar,
+    /// Actually terminate the app.
+    Quit,
+}
+
+fn close_choice(app: &AppHandle) -> CloseChoice {
+    let behavior = app
+        .state::<AppState>()
+        .store
+        .lock()
+        .ok()
+        .and_then(|s| s.get_settings().ok())
+        .map(|s| s.close_behavior)
+        .unwrap_or_default();
+    match behavior.as_str() {
+        "menuBar" => CloseChoice::MenuBar,
+        "quit" => CloseChoice::Quit,
+        _ => CloseChoice::Ask,
+    }
+}
+
 fn open_with_system(target: &str) {
     let _ = std::process::Command::new("open").arg(target).spawn();
+}
+
+/// Bring the dashboard window forward and navigate it to the Settings page,
+/// anchored at the Help section where uninstall lives. Used by the tray Help menu
+/// so the destructive action always goes through the in-app confirm flow.
+fn open_settings(app: &AppHandle) {
+    show_window(app, "dashboard");
+    // Navigate via a client-side event (handled in the root layout) instead of a
+    // hard webview reload, so SvelteKit routing stays intact.
+    let _ = app.emit_to("dashboard", "nav", "/settings#uninstall");
 }
 
 fn dir_size(path: &Path) -> u64 {
@@ -649,6 +793,105 @@ fn tray_icon(style: &str) -> tauri::image::Image<'static> {
     }
 }
 
+// ---- menu-bar "working" spinner ----
+
+const SPINNER_FRAMES: usize = 8;
+const SPINNER_W: u32 = 36;
+const SPINNER_H: u32 = 36;
+
+/// Build one frame of a ring-of-dots spinner as a 36x36 RGBA buffer. The image is
+/// black with the shape carried entirely in the alpha channel, so shown as a macOS
+/// template image it tints itself for a light or dark menu bar. The bright "head"
+/// dot is at `frame`'s position and the others fade around the ring (a comet),
+/// which reads as motion as the head advances frame to frame.
+fn build_spinner_rgba(frame: usize) -> &'static [u8] {
+    const S: usize = 4; // supersample for clean anti-aliased dots
+    const N: usize = SPINNER_FRAMES;
+    const RING: f32 = 0.30; // ring radius, fraction of the square
+    const DOT: f32 = 0.085; // dot radius
+    const TAIL: f32 = 0.12; // dimmest (tail) dot intensity
+
+    // Per-dot intensity: head brightest, fading backwards around the ring.
+    let head = frame % N;
+    let mut intensity = [0f32; N];
+    for (k, slot) in intensity.iter_mut().enumerate() {
+        let behind = (head + N - k) % N; // 0 = head, N-1 = tail
+        *slot = (1.0 - behind as f32 / N as f32).max(TAIL);
+    }
+    // Dot centers on the ring, dot 0 at the top, advancing clockwise.
+    let mut centers = [(0f32, 0f32); N];
+    for (k, c) in centers.iter_mut().enumerate() {
+        let theta = std::f32::consts::TAU * k as f32 / N as f32;
+        *c = (0.5 + RING * theta.sin(), 0.5 - RING * theta.cos());
+    }
+
+    let (w, h) = (SPINNER_W as usize, SPINNER_H as usize);
+    let mut out = vec![0u8; w * h * 4];
+    let samples = (S * S) as f32;
+    for y in 0..h {
+        for x in 0..w {
+            let mut acc = 0f32;
+            for sy in 0..S {
+                let fy = ((y * S + sy) as f32 + 0.5) / (h * S) as f32;
+                for sx in 0..S {
+                    let fx = ((x * S + sx) as f32 + 0.5) / (w * S) as f32;
+                    let mut best = 0f32;
+                    for k in 0..N {
+                        let dx = fx - centers[k].0;
+                        let dy = fy - centers[k].1;
+                        if dx * dx + dy * dy <= DOT * DOT && intensity[k] > best {
+                            best = intensity[k];
+                        }
+                    }
+                    acc += best;
+                }
+            }
+            // RGB stays 0 (black); template tinting uses the alpha as the mask.
+            out[(y * w + x) * 4 + 3] = (acc / samples * 255.0).round() as u8;
+        }
+    }
+    Box::leak(out.into_boxed_slice())
+}
+
+/// The eight spinner frame buffers, built once and reused (no per-frame alloc).
+fn spinner_buf(frame: usize) -> &'static [u8] {
+    use std::sync::OnceLock;
+    static FRAMES: OnceLock<Vec<&'static [u8]>> = OnceLock::new();
+    let frames = FRAMES.get_or_init(|| (0..SPINNER_FRAMES).map(build_spinner_rgba).collect());
+    frames[frame % SPINNER_FRAMES]
+}
+
+/// Cycle the menu-bar icon through the spinner while `animating` is set. Exits
+/// (leaving the icon untouched) as soon as the flag clears, so `spawn_sync` can
+/// deterministically set the final icon afterward.
+///
+/// Two things keep it smooth rather than strobing: template mode is asserted just
+/// once up front (re-asserting it per frame made AppKit clear-and-redraw the
+/// status button, a ~10Hz flash), and every icon swap is marshaled to the main
+/// thread, since AppKit status-item updates from a background thread tear.
+fn animate_tray(app: AppHandle) {
+    // Monochrome template icon, menu-bar-adaptive. Set once.
+    let a = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(tray) = a.tray_by_id("main-tray") {
+            let _ = tray.set_icon_as_template(true);
+        }
+    });
+
+    let mut frame = 0usize;
+    while app.state::<AppState>().animating.load(Ordering::SeqCst) {
+        let buf = spinner_buf(frame);
+        let a = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            if let Some(tray) = a.tray_by_id("main-tray") {
+                let _ = tray.set_icon(Some(tauri::image::Image::new(buf, SPINNER_W, SPINNER_H)));
+            }
+        });
+        frame = frame.wrapping_add(1);
+        std::thread::sleep(Duration::from_millis(110));
+    }
+}
+
 /// Abbreviate a signed net diff for the menu bar: `+388k`, `-1.2M`, `+512`.
 fn abbrev_signed(n: i64) -> String {
     format!("{}{}", if n >= 0 { "+" } else { "-" }, abbrev_unsigned(n.unsigned_abs()))
@@ -716,8 +959,10 @@ pub fn run() {
             open_dashboard,
             open_onboarding,
             open_data_folder,
+            resolve_close,
             cache_info,
             clear_cache,
+            uninstall_app,
             save_tree_image,
         ])
         .setup(|app| {
@@ -738,6 +983,7 @@ pub fn run() {
                 store: Mutex::new(store),
                 cache_dir,
                 syncing: AtomicBool::new(false),
+                animating: AtomicBool::new(false),
             });
 
             // Tray - the app's permanent menu-bar presence.
@@ -761,6 +1007,17 @@ pub fn run() {
                 true,
                 &[&about, &PredefinedMenuItem::separator(app)?, &repo, &data],
             )?;
+            // Help groups support and the clean uninstall together: we help the
+            // user while they stay, and help them leave cleanly if they go.
+            let issue = MenuItem::with_id(app, "open_issue", "Open an Issue", true, None::<&str>)?;
+            let uninstall_mi =
+                MenuItem::with_id(app, "open_uninstall", "Uninstall Lineage…", true, None::<&str>)?;
+            let help = Submenu::with_items(
+                app,
+                "Help",
+                true,
+                &[&issue, &PredefinedMenuItem::separator(app)?, &uninstall_mi],
+            )?;
             let quit = MenuItem::with_id(app, "quit", "Quit Lineage", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -769,6 +1026,7 @@ pub fn run() {
                     &sync,
                     &PredefinedMenuItem::separator(app)?,
                     &settings,
+                    &help,
                     &PredefinedMenuItem::separator(app)?,
                     &quit,
                 ],
@@ -784,6 +1042,8 @@ pub fn run() {
                         spawn_sync(app.clone());
                     }
                     "open_repo" => open_with_system(REPO_URL),
+                    "open_issue" => open_with_system(&format!("{REPO_URL}/issues")),
+                    "open_uninstall" => open_settings(app),
                     "open_data" => {
                         if let Ok(dir) = app.path().app_data_dir() {
                             open_with_system(&dir.to_string_lossy());
@@ -795,14 +1055,37 @@ pub fn run() {
                 .build(app)?;
             let _ = tray.set_title(tray_title(&appearance, summary.as_ref()).as_deref());
 
-            // Windows hide to the tray instead of quitting.
+            // Closing the dashboard is the one lifecycle choice we hand the user:
+            // idle to the menu bar (the menu-bar-app norm) or actually quit - one
+            // of the few Mac apps that closes when you close it. The first close
+            // asks (via the in-app modal); after that we honor the saved choice.
+            // Onboarding is a transient window and always just hides.
             for label in ["dashboard", "onboarding"] {
                 if let Some(w) = app.get_webview_window(label) {
-                    let handle = w.clone();
+                    let win = w.clone();
+                    let app_handle = app.handle().clone();
+                    let is_dashboard = label == "dashboard";
                     w.on_window_event(move |event| {
                         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                            api.prevent_close();
-                            let _ = handle.hide();
+                            if !is_dashboard {
+                                api.prevent_close();
+                                let _ = win.hide();
+                                return;
+                            }
+                            match close_choice(&app_handle) {
+                                CloseChoice::Quit => app_handle.exit(0),
+                                CloseChoice::MenuBar => {
+                                    api.prevent_close();
+                                    let _ = win.hide();
+                                }
+                                CloseChoice::Ask => {
+                                    // Hold the window open and let the modal decide.
+                                    api.prevent_close();
+                                    let _ = win.show();
+                                    let _ = win.set_focus();
+                                    let _ = app_handle.emit_to("dashboard", "close:prompt", ());
+                                }
+                            }
                         }
                     });
                 }

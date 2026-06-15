@@ -57,8 +57,13 @@ export const openUrl = (url: string) => call<void>("open_url", { url });
 export const openDashboard = () => call<void>("open_dashboard");
 export const openOnboarding = () => call<void>("open_onboarding");
 export const openDataFolder = () => call<void>("open_data_folder");
+// Answer the first-close prompt: "menuBar" idles to the tray, "quit" terminates.
+export const resolveClose = (behavior: "menuBar" | "quit") =>
+  call<void>("resolve_close", { behavior });
 export const cacheInfo = () => call<string>("cache_info");
 export const clearCache = () => call<void>("clear_cache");
+// Cleanly removes all local data, the Keychain token, and the app bundle, then quits.
+export const uninstallApp = () => call<void>("uninstall_app");
 export const saveTreeImage = (dataB64: string, login: string) =>
   call<string>("save_tree_image", { dataB64, login });
 

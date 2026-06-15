@@ -139,6 +139,12 @@
   let dragging = $state(false);
   let lastX = 0;
   let lastY = 0;
+  // The center ring pulses once per click on the avatar (a quiet little touch),
+  // never on a loop. Bumping the counter remounts the circle to replay it.
+  let pulses = $state(0);
+  function firePulse() {
+    pulses += 1;
+  }
   const transformed = $derived(scale !== 1 || tx !== 0 || ty !== 0);
 
   function clientToSvg(x: number, y: number) {
@@ -347,7 +353,11 @@
         {/each}
       </g>
 
-      <circle class="pulse" cx="0" cy="0" r={AVATAR_R + 3} />
+      {#if pulses > 0}
+        {#key pulses}
+          <circle class="pulse" cx="0" cy="0" r={AVATAR_R + 3} />
+        {/key}
+      {/if}
       <circle class="ring" cx="0" cy="0" r={AVATAR_R + 3} />
       <clipPath id="avatar-clip"><circle cx="0" cy="0" r={AVATAR_R} /></clipPath>
       {#if profile?.avatarDataUri}
@@ -363,6 +373,10 @@
         <circle cx="0" cy="0" r={AVATAR_R} fill="#21262d" />
         <text class="initial" x="0" y="2">{(profile?.login ?? "?").slice(0, 1).toUpperCase()}</text>
       {/if}
+      <!-- Decorative: clicking the avatar just plays a one-off pulse, no action. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <circle cx="0" cy="0" r={AVATAR_R} fill="transparent" onclick={firePulse} />
     </g>
   </svg>
 
@@ -485,7 +499,7 @@
     stroke-width: 2;
     transform-box: fill-box;
     transform-origin: center;
-    animation: pulse 3.4s ease-out infinite;
+    animation: pulse 0.7s ease-out;
   }
   @keyframes pulse {
     0% {

@@ -159,6 +159,11 @@ pub struct SyncStatus {
     pub last_error: Option<String>,
 }
 
+/// Default close behavior: prompt the user the first time they close the window.
+fn default_close_behavior() -> String {
+    "ask".into()
+}
+
 /// User-configurable settings, persisted to SQLite.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -169,6 +174,16 @@ pub struct AppSettings {
     pub exclude_generated: bool,
     /// Extra author emails beyond the derived noreply address.
     pub extra_emails: Vec<String>,
+    /// Whether the user has seen the first-run tour. Cosmetic: unlike the scope/
+    /// filter fields above, changing it never invalidates the churn cache.
+    /// `#[serde(default)]` lets settings persisted before this field existed load.
+    #[serde(default)]
+    pub seen_tour: bool,
+    /// What closing the dashboard window does: "ask" (default - prompt on the
+    /// first close), "menuBar" (idle to the tray, the menu-bar-app norm), or
+    /// "quit" (actually terminate the app). Cosmetic: never clears the cache.
+    #[serde(default = "default_close_behavior")]
+    pub close_behavior: String,
 }
 
 impl Default for AppSettings {
@@ -179,6 +194,8 @@ impl Default for AppSettings {
             include_archived: true,
             exclude_generated: true,
             extra_emails: Vec::new(),
+            seen_tour: false,
+            close_behavior: default_close_behavior(),
         }
     }
 }
