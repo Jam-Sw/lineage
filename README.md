@@ -1,6 +1,6 @@
 # Master Diff
 
-Your lifetime GitHub "master diff" in the macOS menu bar.
+Your lifetime GitHub "master diff" in the macOS menu bar. .
 
 ## What it is
 

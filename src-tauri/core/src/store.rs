@@ -5,7 +5,8 @@
 
 use crate::error::{AppError, Result};
 use crate::types::{
-    AppSettings, AppearanceSettings, AuthStatus, CachedRepo, RepoChurn, Snapshot, SyncStatus,
+    AppSettings, AppearanceSettings, AuthStatus, CachedRepo, ProfileStats, RepoChurn, Snapshot,
+    SyncStatus,
 };
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
@@ -173,6 +174,41 @@ impl Store {
                  ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
                 (&value, Self::now()),
             )
+            .map_err(|e| AppError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    // ---- cached profile (contributions graph for the impact tree) ----
+
+    pub fn get_profile(&self) -> Result<Option<ProfileStats>> {
+        let raw: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM kv_cache WHERE key = 'profile'", [], |r| r.get(0))
+            .ok();
+        match raw {
+            Some(s) => Ok(Some(
+                serde_json::from_str(&s)
+                    .map_err(|e| AppError::Storage(format!("profile parse: {e}")))?,
+            )),
+            None => Ok(None),
+        }
+    }
+
+    pub fn set_profile(&self, profile: &ProfileStats) -> Result<()> {
+        let value = serde_json::to_string(profile).map_err(|e| AppError::Storage(e.to_string()))?;
+        self.conn
+            .execute(
+                "INSERT INTO kv_cache (key, value, updated_at) VALUES ('profile', ?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
+                (&value, Self::now()),
+            )
+            .map_err(|e| AppError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn clear_profile(&self) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM kv_cache WHERE key = 'profile'", [])
             .map_err(|e| AppError::Storage(e.to_string()))?;
         Ok(())
     }

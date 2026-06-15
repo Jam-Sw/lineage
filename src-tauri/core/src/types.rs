@@ -208,3 +208,33 @@ impl Default for AppearanceSettings {
         }
     }
 }
+
+/// One day in the GitHub contribution calendar (the last ~year), used as the
+/// activity halo around the avatar on the impact tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContributionDay {
+    pub date: String,
+    pub count: u32,
+    /// GitHub's own bucket color for the day (e.g. "#39d353").
+    pub color: String,
+}
+
+/// The authenticated user's identity + contributions graph, powering the radial
+/// "impact tree". Contributions include private activity (queried as the viewer).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileStats {
+    pub login: String,
+    pub name: Option<String>,
+    /// The avatar fetched in Rust and inlined as a `data:` URI (keeps the webview
+    /// from making any network call, per the app's CSP).
+    pub avatar_data_uri: Option<String>,
+    pub created_year: i32,
+    /// Lifetime contributions including private, summed across every year.
+    pub total_contributions: u64,
+    /// The trailing ~12 months only (what the halo renders).
+    pub last_year_contributions: u64,
+    pub calendar: Vec<ContributionDay>,
+    pub fetched_at: Option<String>,
+}

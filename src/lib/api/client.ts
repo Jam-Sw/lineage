@@ -6,6 +6,7 @@ import type {
   AppSettings,
   AppearanceSettings,
   AuthStatus,
+  ProfileStats,
   Snapshot,
   SyncStatus,
 } from "./types";
@@ -34,6 +35,8 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 export const authStatus = () => call<AuthStatus>("auth_status");
 export const getSnapshot = () => call<Snapshot | null>("get_snapshot");
 export const getSyncStatus = () => call<SyncStatus>("get_sync_status");
+export const getProfile = () => call<ProfileStats | null>("get_profile");
+export const refreshProfile = () => call<void>("refresh_profile");
 export const getSettings = () => call<AppSettings>("get_settings");
 export const setSettings = (settings: AppSettings) =>
   call<AppSettings>("set_settings", { settings });
@@ -48,13 +51,15 @@ export const connectViaPat = (token: string) =>
   call<AuthStatus>("connect_via_pat", { token });
 export const disconnect = () => call<AuthStatus>("disconnect");
 
-// actions
-export const syncNow = () => call<void>("sync_now");
+// actions. Returns false when a sync was already running.
+export const syncNow = () => call<boolean>("sync_now");
 export const openUrl = (url: string) => call<void>("open_url", { url });
 export const openDashboard = () => call<void>("open_dashboard");
 export const openOnboarding = () => call<void>("open_onboarding");
 export const openDataFolder = () => call<void>("open_data_folder");
 export const cacheInfo = () => call<string>("cache_info");
 export const clearCache = () => call<void>("clear_cache");
+export const saveTreeImage = (dataB64: string, login: string) =>
+  call<string>("save_tree_image", { dataB64, login });
 
 export { listen } from "@tauri-apps/api/event";

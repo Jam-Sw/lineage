@@ -10,7 +10,7 @@ const API: &str = "https://api.github.com";
 const UA: &str = "master-diff (https://github.com/Jam-Sw/master-diff)";
 
 pub struct GithubClient {
-    token: Sensitive<String>,
+    pub(super) token: Sensitive<String>,
 }
 
 impl GithubClient {

@@ -81,3 +81,26 @@ export interface AppearanceSettings {
   trayMetric: string;
   barStyle: string;
 }
+
+export interface SyncPhase {
+  // "preparing" | "discovering" | "scanning" | "saving"
+  phase: string;
+  message: string;
+}
+
+export interface ContributionDay {
+  date: string;
+  count: number;
+  color: string;
+}
+
+export interface ProfileStats {
+  login: string;
+  name: string | null;
+  avatarDataUri: string | null;
+  createdYear: number;
+  totalContributions: number;
+  lastYearContributions: number;
+  calendar: ContributionDay[];
+  fetchedAt: string | null;
+}

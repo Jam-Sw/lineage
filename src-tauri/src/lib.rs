@@ -6,8 +6,8 @@ use masterdiff_core::credential::{self, CredentialSource, TokenStore};
 use masterdiff_core::github::GithubClient;
 use masterdiff_core::numstat::ChurnOptions;
 use masterdiff_core::types::{
-    AppSettings, AppearanceSettings, AuthStatus, LanguageStat, RepoChurn, Scope, Snapshot, Summary,
-    SyncStatus,
+    AppSettings, AppearanceSettings, AuthStatus, LanguageStat, ProfileStats, RepoChurn, Scope,
+    Snapshot, Summary, SyncStatus,
 };
 use masterdiff_core::{aggregate, engine, AppError, Store};
 use serde::Serialize;
@@ -60,6 +60,23 @@ struct SyncTickPayload {
     net: i64,
     commits: u64,
     languages: Vec<LanguageStat>,
+}
+
+/// A lightweight phase signal so the UI shows motion during the gap between the
+/// click and the first per-repo tick (token read, repo discovery), instead of
+/// looking frozen.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SyncPhasePayload {
+    phase: String,
+    message: String,
+}
+
+fn emit_phase(app: &AppHandle, phase: &str, message: &str) {
+    let _ = app.emit(
+        "sync:phase",
+        SyncPhasePayload { phase: phase.into(), message: message.into() },
+    );
 }
 
 impl SyncTickPayload {
@@ -149,6 +166,22 @@ fn get_sync_status(state: State<'_, AppState>) -> CmdResult<SyncStatus> {
     Ok(store_lock(&state)?.sync_status()?)
 }
 
+/// The cached impact-tree profile (contributions graph + avatar). Populated by
+/// sync; `refresh_profile` fetches it on demand when the cache is empty.
+#[tauri::command]
+fn get_profile(state: State<'_, AppState>) -> CmdResult<Option<ProfileStats>> {
+    Ok(store_lock(&state)?.get_profile()?)
+}
+
+/// Fetch the contributions graph off-thread and emit `profile:done` when ready.
+#[tauri::command]
+fn refresh_profile(app: AppHandle) -> CmdResult<()> {
+    std::thread::spawn(move || {
+        let _ = fetch_and_store_profile(&app);
+    });
+    Ok(())
+}
+
 #[tauri::command]
 fn get_settings(state: State<'_, AppState>) -> CmdResult<AppSettings> {
     Ok(store_lock(&state)?.get_settings()?)
@@ -229,7 +262,11 @@ fn finish_connect(state: &State<'_, AppState>, app: &AppHandle) -> CmdResult<Aut
 #[tauri::command]
 fn disconnect(state: State<'_, AppState>, app: AppHandle) -> CmdResult<AuthStatus> {
     let _ = TokenStore::clear();
-    store_lock(&state)?.clear_credential_meta()?;
+    {
+        let s = store_lock(&state)?;
+        s.clear_credential_meta()?;
+        let _ = s.clear_profile();
+    }
     let status = store_lock(&state)?.auth_status()?;
     let _ = app.emit("auth:changed", &status);
     set_tray_title(&app, "-");
@@ -238,10 +275,11 @@ fn disconnect(state: State<'_, AppState>, app: AppHandle) -> CmdResult<AuthStatu
 
 // ---- actions ----
 
+/// Kick off a sync. Returns `false` when one was already in flight (the existing
+/// run keeps streaming, so the UI should stay in its syncing state either way).
 #[tauri::command]
-fn sync_now(app: AppHandle) -> CmdResult<()> {
-    spawn_sync(app);
-    Ok(())
+fn sync_now(app: AppHandle) -> CmdResult<bool> {
+    Ok(spawn_sync(app))
 }
 
 #[tauri::command]
@@ -278,18 +316,89 @@ fn clear_cache(state: State<'_, AppState>) -> CmdResult<()> {
     Ok(())
 }
 
+/// Persist an exported impact-tree PNG (base64) to the Desktop and reveal it in
+/// Finder. Returns the saved path so the UI can confirm. Keeps image export
+/// entirely in Rust file IO, no extra Tauri plugins.
+#[tauri::command]
+fn save_tree_image(app: AppHandle, data_b64: String, login: String) -> CmdResult<String> {
+    let bytes = base64_decode(&data_b64).ok_or_else(|| CmdError {
+        code: "VALIDATION".into(),
+        message: "invalid image data".into(),
+    })?;
+    let dir = app
+        .path()
+        .desktop_dir()
+        .or_else(|_| app.path().home_dir())
+        .map_err(|e| CmdError { code: "STORAGE_ERROR".into(), message: e.to_string() })?;
+    let safe: String = login
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let stem = if safe.is_empty() { "master-diff".to_string() } else { format!("master-diff-{safe}") };
+    let path = dir.join(format!("{stem}.png"));
+    std::fs::write(&path, &bytes)
+        .map_err(|e| CmdError { code: "STORAGE_ERROR".into(), message: e.to_string() })?;
+    let display = path.to_string_lossy().to_string();
+    let _ = std::process::Command::new("open").arg("-R").arg(&display).spawn();
+    Ok(display)
+}
+
+/// Standard base64 decode (RFC 4648), inverse of the core's encoder. Ignores
+/// whitespace; rejects other invalid characters.
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    fn val(c: u8) -> Option<u8> {
+        match c {
+            b'A'..=b'Z' => Some(c - b'A'),
+            b'a'..=b'z' => Some(c - b'a' + 26),
+            b'0'..=b'9' => Some(c - b'0' + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    }
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let mut quad = [0u8; 4];
+    let mut n = 0;
+    for &c in s.as_bytes() {
+        if c == b'=' || c.is_ascii_whitespace() {
+            continue;
+        }
+        quad[n] = val(c)?;
+        n += 1;
+        if n == 4 {
+            out.push((quad[0] << 2) | (quad[1] >> 4));
+            out.push((quad[1] << 4) | (quad[2] >> 2));
+            out.push((quad[2] << 6) | quad[3]);
+            n = 0;
+        }
+    }
+    match n {
+        0 => {}
+        2 => out.push((quad[0] << 2) | (quad[1] >> 4)),
+        3 => {
+            out.push((quad[0] << 2) | (quad[1] >> 4));
+            out.push((quad[1] << 4) | (quad[2] >> 2));
+        }
+        _ => return None,
+    }
+    Some(out)
+}
+
 // ---- background sync ----
 
-fn spawn_sync(app: AppHandle) {
+fn spawn_sync(app: AppHandle) -> bool {
     {
         let state = app.state::<AppState>();
         if state.syncing.swap(true, Ordering::SeqCst) {
-            return; // a sync is already running
+            return false; // a sync is already running
         }
         // Mark "syncing" right away (before the ~2s of API discovery) so a window
         // opening now goes straight into the live reveal instead of the first-run screen.
         let _ = state.store.lock().map(|s| s.sync_begin(0));
     }
+    // Immediate feedback: the token read + discovery can take a few seconds (and a
+    // first run may block on a Keychain prompt), so signal motion right now.
+    emit_phase(&app, "preparing", "Starting sync\u{2026}");
     std::thread::spawn(move || {
         let result = run_sync(&app);
         let state = app.state::<AppState>();
@@ -301,6 +410,21 @@ fn spawn_sync(app: AppHandle) {
             let _ = app.emit("sync:error", CmdError::from(e));
         }
     });
+    true
+}
+
+/// Fetch the contributions graph + avatar and cache it, emitting `profile:done`.
+/// Best-effort: callers treat a failure as non-fatal (the tree just lacks the
+/// contributions layer until the next try).
+fn fetch_and_store_profile(app: &AppHandle) -> masterdiff_core::Result<()> {
+    let token = TokenStore::load()?
+        .ok_or_else(|| AppError::NotConnected("not connected to GitHub".into()))?;
+    let client = GithubClient::new(token.expose().clone());
+    let profile = client.fetch_profile()?;
+    let state = app.state::<AppState>();
+    let _ = state.store.lock().map(|s| s.set_profile(&profile));
+    let _ = app.emit("profile:done", &profile);
+    Ok(())
 }
 
 fn run_sync(app: &AppHandle) -> masterdiff_core::Result<()> {
@@ -314,6 +438,16 @@ fn run_sync(app: &AppHandle) -> masterdiff_core::Result<()> {
     let client = GithubClient::new(token.expose().clone());
     let user = client.get_user()?;
 
+    // Impact-tree profile (contributions graph + avatar), fetched early so the
+    // second page can render while the clone loop is still running. Best-effort:
+    // a failure here must not abort the churn sync.
+    if let Ok(profile) = client.fetch_profile() {
+        if let Ok(s) = state.store.lock() {
+            let _ = s.set_profile(&profile);
+        }
+        let _ = app.emit("profile:done", &profile);
+    }
+
     let mut emails = vec![user.noreply_email()];
     emails.extend(settings.extra_emails.clone());
 
@@ -323,11 +457,13 @@ fn run_sync(app: &AppHandle) -> masterdiff_core::Result<()> {
         include_archived: settings.include_archived,
         login: user.login.clone(),
     };
+    emit_phase(app, "discovering", "Finding your repositories\u{2026}");
     let repos = engine::discover(&client, &scope_cfg)?;
     let cached = lock_store(&state)?.load_repo_cache()?;
 
     lock_store(&state)?.sync_begin(repos.len() as u32)?;
     let _ = app.emit("sync:tick", SyncTickPayload::start(repos.len()));
+    emit_phase(app, "scanning", "Scanning repositories\u{2026}");
 
     let opts = if settings.exclude_generated {
         ChurnOptions::filtered()
@@ -349,6 +485,7 @@ fn run_sync(app: &AppHandle) -> masterdiff_core::Result<()> {
         let _ = app.emit("sync:tick", payload);
     })?;
 
+    emit_phase(app, "saving", "Finishing up\u{2026}");
     // Persist the per-repo cache for fast incremental re-syncs.
     {
         let s = lock_store(&state)?;
@@ -564,6 +701,8 @@ pub fn run() {
             auth_status,
             get_snapshot,
             get_sync_status,
+            get_profile,
+            refresh_profile,
             get_settings,
             set_settings,
             get_appearance,
@@ -579,6 +718,7 @@ pub fn run() {
             open_data_folder,
             cache_info,
             clear_cache,
+            save_tree_image,
         ])
         .setup(|app| {
             let dir = app
@@ -640,7 +780,9 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open_dashboard" => show_window(app, "dashboard"),
-                    "sync_now" => spawn_sync(app.clone()),
+                    "sync_now" => {
+                        spawn_sync(app.clone());
+                    }
                     "open_repo" => open_with_system(REPO_URL),
                     "open_data" => {
                         if let Ok(dir) = app.path().app_data_dir() {
@@ -683,7 +825,19 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::abbrev_signed;
+    use super::{abbrev_signed, base64_decode};
+
+    #[test]
+    fn base64_decodes_known_vectors() {
+        assert_eq!(base64_decode("").unwrap(), b"");
+        assert_eq!(base64_decode("Zg==").unwrap(), b"f");
+        assert_eq!(base64_decode("Zm8=").unwrap(), b"fo");
+        assert_eq!(base64_decode("Zm9v").unwrap(), b"foo");
+        assert_eq!(base64_decode("Zm9vYmFy").unwrap(), b"foobar");
+        // tolerant of whitespace/newlines that data URLs sometimes carry
+        assert_eq!(base64_decode("Zm9v\nYmFy").unwrap(), b"foobar");
+        assert!(base64_decode("@@@@").is_none());
+    }
 
     #[test]
     fn abbreviates_signed() {

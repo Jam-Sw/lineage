@@ -6,22 +6,27 @@
     SyncStatus,
     AuthStatus,
     SyncTick,
+    SyncPhase,
     RepoStat,
     AppearanceSettings,
+    ProfileStats,
   } from "$lib/api/types";
   import { commas, signed, relativeTime } from "$lib/format";
   import LiveReveal from "$lib/components/LiveReveal.svelte";
   import LanguageBars from "$lib/components/LanguageBars.svelte";
   import Treemap from "$lib/components/Treemap.svelte";
+  import ImpactTree from "$lib/components/ImpactTree.svelte";
 
   type FeedItem = { repo: string; added: number; removed: number; lang: string | null; cached: boolean };
 
   let auth = $state<AuthStatus>({ connected: false, source: null, login: null });
   let snapshot = $state<Snapshot | null>(null);
+  let profile = $state<ProfileStats | null>(null);
   let syncStatus = $state<SyncStatus | null>(null);
   let tick = $state<SyncTick | null>(null);
   let feed = $state<FeedItem[]>([]);
   let syncingLive = $state(false);
+  let syncMessage = $state("Starting sync…");
   let error = $state<string | null>(null);
   let appearance = $state<AppearanceSettings>({
     trayIcon: "plusMinus",
@@ -32,6 +37,10 @@
 
   let sortKey = $state<"net" | "added" | "removed" | "name">("net");
   let sortDir = $state<1 | -1>(-1);
+
+  // Swipe pager (dashboard <-> impact tree).
+  let pagerEl = $state<HTMLDivElement | null>(null);
+  let page = $state(0);
 
   const phase = $derived(
     !auth.connected
@@ -71,6 +80,10 @@
         ].slice(0, 16);
       }
     });
+    api.listen<SyncPhase>("sync:phase", (e) => {
+      syncMessage = e.payload.message;
+      syncingLive = true;
+    });
     api.listen<Snapshot>("sync:done", (e) => {
       snapshot = e.payload;
       syncingLive = false;
@@ -91,14 +104,37 @@
     api.listen<AppearanceSettings>("appearance:changed", (e) => {
       appearance = e.payload;
     });
+    api.listen<ProfileStats>("profile:done", (e) => {
+      profile = e.payload;
+    });
   });
 
   async function load() {
     auth = await api.authStatus();
     appearance = await api.getAppearance();
     snapshot = await api.getSnapshot();
+    profile = await api.getProfile();
+    // No cached contributions graph yet (and not mid-sync): fetch it on demand.
+    if (!profile && auth.connected) void api.refreshProfile();
     await refreshSync();
     if (syncStatus?.syncing) syncingLive = true;
+  }
+
+  function goPage(p: number) {
+    if (!pagerEl) return;
+    page = Math.max(0, Math.min(1, p));
+    pagerEl.scrollTo({ left: page * pagerEl.clientWidth, behavior: "smooth" });
+  }
+
+  function onPagerScroll() {
+    if (!pagerEl) return;
+    page = Math.round(pagerEl.scrollLeft / pagerEl.clientWidth);
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (phase !== "dashboard") return;
+    if (e.key === "ArrowRight") goPage(page + 1);
+    else if (e.key === "ArrowLeft") goPage(page - 1);
   }
 
   async function refreshSync() {
@@ -107,9 +143,16 @@
 
   async function doSync() {
     error = null;
-    syncingLive = true;
     feed = [];
-    await api.syncNow();
+    tick = null;
+    syncMessage = "Starting sync…";
+    syncingLive = true; // immediate feedback, before the IPC round-trip resolves
+    try {
+      await api.syncNow();
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      syncingLive = false;
+    }
     await refreshSync();
   }
 
@@ -122,37 +165,13 @@
   }
 </script>
 
-<main class:wide={phase === "live" || phase === "dashboard"}>
-  {#if phase === "connect"}
-    <div class="empty">
-      <h1>Master Diff</h1>
-      <p class="dim">Connect your GitHub account to see your lifetime master diff.</p>
-      <button class="primary" onclick={() => api.openOnboarding()}>Connect GitHub</button>
-    </div>
-  {:else if phase === "firstrun"}
-    <div class="empty">
-      <h1>Ready</h1>
-      <p class="dim">
-        Master Diff will clone your repositories and tally every line you have written. The
-        first run takes a few minutes; after that, re-syncs are fast.
-      </p>
-      {#if error}<p class="remove">{error}</p>{/if}
-      <button class="primary" onclick={doSync}>Compute my master diff</button>
-    </div>
-  {:else if phase === "live"}
-    <LiveReveal
-      net={tick?.net ?? 0}
-      added={tick?.added ?? 0}
-      removed={tick?.removed ?? 0}
-      commits={tick?.commits ?? 0}
-      done={tick?.done ?? 0}
-      total={tick?.total ?? syncStatus?.reposTotal ?? 0}
-      languages={tick?.languages ?? []}
-      barStyle={appearance.barStyle}
-      {feed}
-    />
-  {:else if snapshot}
-    <header>
+<svelte:window onkeydown={onKey} />
+
+{#if phase === "dashboard" && snapshot}
+  <div class="pager" bind:this={pagerEl} onscroll={onPagerScroll}>
+    <div class="page page-scroll">
+      <div class="col">
+        <header>
       <div class="headline">
         <div class="net mono {snapshot.summary.net >= 0 ? 'add' : 'remove'}">
           {signed(snapshot.summary.net)}
@@ -172,10 +191,14 @@
       </div>
       <div class="actions">
         <a class="gear" href="/settings" title="Settings">⚙</a>
-        <button onclick={doSync} disabled={syncingLive}>{syncingLive ? "Syncing…" : "Sync now"}</button>
+        <button class="sync-btn" onclick={doSync} disabled={syncingLive}>
+          {#if syncingLive}<span class="spin" aria-hidden="true"></span>Syncing…{:else}Sync now{/if}
+        </button>
         <div class="synced dim">
-          {#if syncingLive && tick}
+          {#if syncingLive && tick && tick.total}
             {tick.done}/{tick.total} · <span class="mono">{tick.repo}</span>
+          {:else if syncingLive}
+            {syncMessage}
           {:else}
             synced {relativeTime(snapshot.lastSyncedAt)}
           {/if}
@@ -183,9 +206,12 @@
       </div>
     </header>
 
-    {#if syncingLive && tick}
-      <div class="restrip">
-        <div class="rfill" style="width:{tick.total ? (tick.done / tick.total) * 100 : 0}%"></div>
+    {#if syncingLive}
+      <div class="restrip" class:indeterminate={!tick || !tick.total}>
+        <div
+          class="rfill"
+          style={tick && tick.total ? `width:${(tick.done / tick.total) * 100}%` : ""}
+        ></div>
       </div>
     {/if}
     {#if error}<p class="remove">{error}</p>{/if}
@@ -222,11 +248,55 @@
               <td class="dim">{r.topLanguage ?? "-"}</td>
             </tr>
           {/each}
-        </tbody>
-      </table>
-    </section>
-  {/if}
-</main>
+          </tbody>
+        </table>
+        </section>
+      </div>
+    </div>
+
+    <div class="page tree-page">
+      <ImpactTree {snapshot} {profile} />
+    </div>
+  </div>
+
+  <div class="dots">
+    <button class:active={page === 0} onclick={() => goPage(0)} title="Dashboard" aria-label="Dashboard"></button>
+    <button class:active={page === 1} onclick={() => goPage(1)} title="Impact tree" aria-label="Impact tree"></button>
+  </div>
+{:else}
+  <main class:wide={phase === "live"}>
+    {#if phase === "connect"}
+      <div class="empty">
+        <h1>Master Diff</h1>
+        <p class="dim">Connect your GitHub account to see your lifetime master diff.</p>
+        <button class="primary" onclick={() => api.openOnboarding()}>Connect GitHub</button>
+      </div>
+    {:else if phase === "firstrun"}
+      <div class="empty">
+        <h1>Ready</h1>
+        <p class="dim">
+          Master Diff will clone your repositories and tally every line you have written. The
+          first run takes a few minutes; after that, re-syncs are fast.
+        </p>
+        {#if error}<p class="remove">{error}</p>{/if}
+        <button class="primary" onclick={doSync}>Compute my master diff</button>
+      </div>
+    {:else if phase === "live"}
+      <LiveReveal
+        net={tick?.net ?? 0}
+        added={tick?.added ?? 0}
+        removed={tick?.removed ?? 0}
+        commits={tick?.commits ?? 0}
+        done={tick?.done ?? 0}
+        total={tick?.total ?? syncStatus?.reposTotal ?? 0}
+        languages={tick?.languages ?? []}
+        barStyle={appearance.barStyle}
+        message={syncMessage}
+        {feed}
+      />
+    {/if}
+  </main>
+{/if}
 
 <style>
   main {
@@ -236,6 +306,68 @@
   }
   main.wide {
     max-width: 920px;
+  }
+
+  /* Swipe pager: dashboard <-> impact tree. */
+  .pager {
+    display: flex;
+    height: 100vh;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scroll-snap-type: x mandatory;
+    scrollbar-width: none;
+  }
+  .pager::-webkit-scrollbar {
+    display: none;
+  }
+  .page {
+    flex: 0 0 100%;
+    width: 100%;
+    height: 100vh;
+    scroll-snap-align: start;
+    scrollbar-width: none;
+  }
+  .page::-webkit-scrollbar {
+    display: none;
+  }
+  .page-scroll {
+    overflow-y: auto;
+  }
+  .page.tree-page {
+    overflow: hidden;
+  }
+  .col {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 22px 26px 64px;
+  }
+  .dots {
+    position: fixed;
+    bottom: 14px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 9px;
+    z-index: 5;
+    pointer-events: none;
+  }
+  .dots button {
+    pointer-events: auto;
+    width: 8px;
+    height: 8px;
+    padding: 0;
+    border-radius: 50%;
+    border: none;
+    background: var(--border);
+    transition: background 0.15s, transform 0.15s;
+  }
+  .dots button:hover {
+    background: var(--text-faint);
+  }
+  .dots button.active {
+    background: var(--accent);
+    transform: scale(1.25);
   }
   .empty {
     text-align: center;
@@ -259,9 +391,9 @@
   }
   .net {
     font-size: 54px;
-    font-weight: 700;
+    font-weight: 800;
     line-height: 1;
-    letter-spacing: -0.02em;
+    letter-spacing: var(--track-display);
   }
   .sub {
     margin-top: 8px;
@@ -298,6 +430,27 @@
   }
   .synced {
     font-size: 12px;
+    min-height: 15px;
+  }
+  .sync-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 96px;
+    justify-content: center;
+  }
+  .spin {
+    width: 11px;
+    height: 11px;
+    border: 2px solid color-mix(in srgb, var(--text) 35%, transparent);
+    border-top-color: var(--text);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .restrip {
     height: 3px;
@@ -311,13 +464,27 @@
     background: var(--accent);
     transition: width 0.3s ease;
   }
+  /* Before the first repo result, total is unknown: sweep an indeterminate bar. */
+  .restrip.indeterminate .rfill {
+    width: 40%;
+    border-radius: 999px;
+    animation: sweep 1.1s ease-in-out infinite;
+  }
+  @keyframes sweep {
+    0% {
+      margin-left: -42%;
+    }
+    100% {
+      margin-left: 100%;
+    }
+  }
   section {
     margin-top: 26px;
   }
   h2 {
     font-size: 12px;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--track-label);
     color: var(--text-dim);
     margin: 0 0 12px;
   }

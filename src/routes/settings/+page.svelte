@@ -196,7 +196,7 @@
   h2 {
     font-size: 12px;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--track-label);
     color: var(--text-dim);
     margin: 0 0 12px;
   }

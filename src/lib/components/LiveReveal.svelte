@@ -21,6 +21,7 @@
     total,
     languages,
     barStyle = "language",
+    message = "Starting sync…",
     feed,
   }: {
     net: number;
@@ -31,6 +32,7 @@
     total: number;
     languages: LanguageStat[];
     barStyle?: string;
+    message?: string;
     feed: FeedItem[];
   } = $props();
 
@@ -64,8 +66,12 @@
       <span class="dim">· {commas(commits)} commits, building your master diff…</span>
     </div>
     <div class="prog">
-      <div class="track"><div class="fill" style="width:{pct}%"></div></div>
-      <div class="ptext dim">{done} / {total} repositories scanned</div>
+      <div class="track" class:indeterminate={!total}>
+        <div class="fill" style={total ? `width:${pct}%` : ""}></div>
+      </div>
+      <div class="ptext dim">
+        {#if total}{done} / {total} repositories scanned{:else}{message}{/if}
+      </div>
     </div>
   </div>
 
@@ -108,9 +114,9 @@
   }
   .big {
     font-size: 72px;
-    font-weight: 700;
+    font-weight: 800;
     line-height: 1;
-    letter-spacing: -0.02em;
+    letter-spacing: var(--track-display);
   }
   .subline {
     margin-top: 10px;
@@ -138,6 +144,19 @@
     border-radius: 999px;
     transition: width 0.3s ease;
   }
+  /* Discovery: repo count unknown, sweep an indeterminate bar. */
+  .track.indeterminate .fill {
+    width: 38%;
+    animation: sweep 1.1s ease-in-out infinite;
+  }
+  @keyframes sweep {
+    0% {
+      margin-left: -40%;
+    }
+    100% {
+      margin-left: 100%;
+    }
+  }
   .ptext {
     margin-top: 7px;
     font-size: 12px;
@@ -151,7 +170,7 @@
   h3 {
     font-size: 12px;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: var(--track-label);
     color: var(--text-dim);
     margin: 0 0 12px;
   }
