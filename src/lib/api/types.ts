@@ -57,6 +57,10 @@ export interface AppSettings {
   includeArchived: boolean;
   excludeGenerated: boolean;
   extraEmails: string[];
+  seenTour: boolean;
+  // Closing the window: "ask" (prompt on first close), "menuBar" (idle to the
+  // tray), or "quit" (terminate the app).
+  closeBehavior: string;
 }
 
 export interface SyncTick {
