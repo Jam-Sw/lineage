@@ -7,7 +7,7 @@ use crate::types::RepoMeta;
 use std::collections::BTreeMap;
 
 const API: &str = "https://api.github.com";
-const UA: &str = "master-diff (https://github.com/Jam-Sw/master-diff)";
+const UA: &str = "lineage (https://github.com/Jam-Sw/lineage)";
 
 pub struct GithubClient {
     pub(super) token: Sensitive<String>,

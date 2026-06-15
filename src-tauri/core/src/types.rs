@@ -25,7 +25,7 @@ pub struct RepoMeta {
     pub pushed_at: Option<String>,
 }
 
-/// What counts toward the master diff. Defaults to "everything I authored".
+/// What counts toward the Lineage. Defaults to "everything I authored".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Scope {
@@ -112,7 +112,7 @@ pub struct RepoStat {
     pub top_language: Option<String>,
 }
 
-/// The headline numbers - the lifetime "master diff".
+/// The headline numbers - the lifetime "Lineage".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Summary {

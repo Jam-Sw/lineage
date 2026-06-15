@@ -267,19 +267,19 @@
   <main class:wide={phase === "live"}>
     {#if phase === "connect"}
       <div class="empty">
-        <h1>Master Diff</h1>
-        <p class="dim">Connect your GitHub account to see your lifetime master diff.</p>
+        <h1>Lineage</h1>
+        <p class="dim">Connect your GitHub account to see your Lineage.</p>
         <button class="primary" onclick={() => api.openOnboarding()}>Connect GitHub</button>
       </div>
     {:else if phase === "firstrun"}
       <div class="empty">
         <h1>Ready</h1>
         <p class="dim">
-          Master Diff will clone your repositories and tally every line you have written. The
+          Lineage will clone your repositories and tally every line you have written. The
           first run takes a few minutes; after that, re-syncs are fast.
         </p>
         {#if error}<p class="remove">{error}</p>{/if}
-        <button class="primary" onclick={doSync}>Compute my master diff</button>
+        <button class="primary" onclick={doSync}>Compute my Lineage</button>
       </div>
     {:else if phase === "live"}
       <LiveReveal

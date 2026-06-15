@@ -1,14 +1,14 @@
 # Project Context
 
 ## Purpose
-Master Diff is a macOS menu-bar app that shows your lifetime GitHub "master diff" -
+Lineage is a macOS menu-bar app that shows your lifetime GitHub diff -
 the net of every line you have added and removed across your whole account - and a
 dashboard with a per-language and per-repository breakdown. The number should be
 meaningful (your real authored code), not raw churn inflated by generated files.
 
 ## Tech Stack
 - Tauri 2 desktop shell (menu-bar / tray first)
-- Rust core (`masterdiff-core`) for API access, the git churn engine, language mapping, and aggregation
+- Rust core (`lineage-core`) for API access, the git churn engine, language mapping, and aggregation
 - SQLite via rusqlite for the cached result and settings
 - `ureq` (blocking) for the GitHub REST/GraphQL API; the `git` CLI for cloning
 - `keyring` for token storage in the macOS Keychain
@@ -24,18 +24,18 @@ state and typed IPC calls. UI code calls the API client instead of `invoke` dire
 ### Architecture Patterns
 A local Rust core behind a thin Tauri shell. The deep engine clones each in-scope
 repo and parses `git log --numstat` for the user's commits, buckets by language, and
-aggregates into the master diff. Heavy work runs on a background thread and reports
+aggregates into the headline total. Heavy work runs on a background thread and reports
 progress through change events; the tray title is updated via `TrayIcon::set_title`.
 
 ### Testing Strategy
 Pure core modules (numstat parsing, language mapping, generated-file filtering, scope
 rules, aggregation, dedup) are covered with Rust unit tests. The engine is validated
-end-to-end against the real account via the `master_diff_m0` example. Frontend types
+end-to-end against the real account via the `lineage_m0` example. Frontend types
 pass `svelte-check`; web assets build through Vite.
 
 ## Domain Context
 A repository's churn is the lines the user authored, matched across all their emails
-(`--no-merges`, all branches). "Master diff" is the net (added minus removed) summed
+(`--no-merges`, all branches). Lineage is the net (added minus removed) summed
 across in-scope repos. Default scope is everything the user authored across owned,
 org, and collaborator repos, with forks excluded. Generated and vendored files are
 excluded by default because they dominate and distort raw churn.

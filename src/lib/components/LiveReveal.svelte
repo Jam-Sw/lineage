@@ -63,7 +63,7 @@
     <div class="subline">
       <span class="add">+{commas(added)}</span>
       <span class="remove">−{commas(removed)}</span>
-      <span class="dim">· {commas(commits)} commits, building your master diff…</span>
+      <span class="dim">· {commas(commits)} commits, building your Lineage…</span>
     </div>
     <div class="prog">
       <div class="track" class:indeterminate={!total}>

@@ -1,15 +1,15 @@
-//! App shell: tray (with the live "master diff" title), windows, IPC commands,
-//! and the background sync that drives `masterdiff-core`'s deep engine off the UI
+//! App shell: tray (with the live "Lineage" title), windows, IPC commands,
+//! and the background sync that drives `lineage-core`'s deep engine off the UI
 //! thread. No business logic here - that lives in the core crate.
 
-use masterdiff_core::credential::{self, CredentialSource, TokenStore};
-use masterdiff_core::github::GithubClient;
-use masterdiff_core::numstat::ChurnOptions;
-use masterdiff_core::types::{
+use lineage_core::credential::{self, CredentialSource, TokenStore};
+use lineage_core::github::GithubClient;
+use lineage_core::numstat::ChurnOptions;
+use lineage_core::types::{
     AppSettings, AppearanceSettings, AuthStatus, LanguageStat, ProfileStats, RepoChurn, Scope,
     Snapshot, Summary, SyncStatus,
 };
-use masterdiff_core::{aggregate, engine, AppError, Store};
+use lineage_core::{aggregate, engine, AppError, Store};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -19,7 +19,7 @@ use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-const REPO_URL: &str = "https://github.com/Jam-Sw/master-diff";
+const REPO_URL: &str = "https://github.com/Jam-Sw/lineage";
 
 struct AppState {
     store: Mutex<Store>,
@@ -242,7 +242,7 @@ fn connect_via_pat(
     app: AppHandle,
     token: String,
 ) -> CmdResult<AuthStatus> {
-    let token = masterdiff_core::sensitive::Sensitive(token.trim().to_string());
+    let token = lineage_core::sensitive::Sensitive(token.trim().to_string());
     let (user, src) = credential::connect(token, CredentialSource::Pat)?;
     store_lock(&state)?.set_credential_meta(src.as_str(), &user.login)?;
     finish_connect(&state, &app)
@@ -334,7 +334,7 @@ fn save_tree_image(app: AppHandle, data_b64: String, login: String) -> CmdResult
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
         .collect();
-    let stem = if safe.is_empty() { "master-diff".to_string() } else { format!("master-diff-{safe}") };
+    let stem = if safe.is_empty() { "lineage".to_string() } else { format!("lineage-{safe}") };
     let path = dir.join(format!("{stem}.png"));
     std::fs::write(&path, &bytes)
         .map_err(|e| CmdError { code: "STORAGE_ERROR".into(), message: e.to_string() })?;
@@ -416,7 +416,7 @@ fn spawn_sync(app: AppHandle) -> bool {
 /// Fetch the contributions graph + avatar and cache it, emitting `profile:done`.
 /// Best-effort: callers treat a failure as non-fatal (the tree just lacks the
 /// contributions layer until the next try).
-fn fetch_and_store_profile(app: &AppHandle) -> masterdiff_core::Result<()> {
+fn fetch_and_store_profile(app: &AppHandle) -> lineage_core::Result<()> {
     let token = TokenStore::load()?
         .ok_or_else(|| AppError::NotConnected("not connected to GitHub".into()))?;
     let client = GithubClient::new(token.expose().clone());
@@ -427,7 +427,7 @@ fn fetch_and_store_profile(app: &AppHandle) -> masterdiff_core::Result<()> {
     Ok(())
 }
 
-fn run_sync(app: &AppHandle) -> masterdiff_core::Result<()> {
+fn run_sync(app: &AppHandle) -> lineage_core::Result<()> {
     let state = app.state::<AppState>();
     let cache_dir = state.cache_dir.clone();
 
@@ -515,7 +515,7 @@ fn run_sync(app: &AppHandle) -> masterdiff_core::Result<()> {
     Ok(())
 }
 
-fn lock_store<'a>(state: &'a State<'_, AppState>) -> masterdiff_core::Result<std::sync::MutexGuard<'a, Store>> {
+fn lock_store<'a>(state: &'a State<'_, AppState>) -> lineage_core::Result<std::sync::MutexGuard<'a, Store>> {
     state
         .store
         .lock()
@@ -726,7 +726,7 @@ pub fn run() {
                 .app_data_dir()
                 .expect("cannot resolve app data directory");
             std::fs::create_dir_all(&dir)?;
-            let store = Store::open(&dir.join("masterdiff.db"))
+            let store = Store::open(&dir.join("lineage.db"))
                 .map_err(|e| format!("cannot open store: {e}"))?;
 
             let connected = store.auth_status().map(|a| a.connected).unwrap_or(false);
@@ -745,11 +745,11 @@ pub fn run() {
             let sync = MenuItem::with_id(app, "sync_now", "Sync Now", true, None::<&str>)?;
             let about = PredefinedMenuItem::about(
                 app,
-                Some("About Master Diff"),
+                Some("About Lineage"),
                 Some(AboutMetadata {
                     version: Some(env!("CARGO_PKG_VERSION").into()),
                     website: Some(REPO_URL.into()),
-                    website_label: Some("Jam-Sw/master-diff".into()),
+                    website_label: Some("Jam-Sw/lineage".into()),
                     ..Default::default()
                 }),
             )?;
@@ -761,7 +761,7 @@ pub fn run() {
                 true,
                 &[&about, &PredefinedMenuItem::separator(app)?, &repo, &data],
             )?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Master Diff", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Lineage", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
                 &[

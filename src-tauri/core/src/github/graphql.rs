@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::io::Read;
 
 const GQL: &str = "https://api.github.com/graphql";
-const UA: &str = "master-diff (https://github.com/Jam-Sw/master-diff)";
+const UA: &str = "lineage (https://github.com/Jam-Sw/lineage)";
 /// GitHub launched in 2008; no contributions predate it.
 const FIRST_YEAR: i32 = 2008;
 

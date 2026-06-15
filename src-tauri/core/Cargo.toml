@@ -1,7 +1,7 @@
 [package]
-name = "masterdiff-core"
+name = "lineage-core"
 version = "0.1.0"
-description = "Master Diff core - GitHub repo discovery, churn engine, language mapping, aggregation. No UI, no Tauri."
+description = "Lineage core - GitHub repo discovery, churn engine, language mapping, aggregation. No UI, no Tauri."
 edition = "2021"
 
 [dependencies]

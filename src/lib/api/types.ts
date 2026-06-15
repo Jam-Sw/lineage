@@ -1,4 +1,4 @@
-// Mirrors the serde (camelCase) types in masterdiff-core.
+// Mirrors the serde (camelCase) types in lineage-core.
 
 export interface Summary {
   added: number;

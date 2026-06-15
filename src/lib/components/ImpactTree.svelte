@@ -236,7 +236,7 @@
          <image href="${profile.avatarDataUri}" x="${-AVATAR_R}" y="${-AVATAR_R}" width="${AVATAR_R * 2}" height="${AVATAR_R * 2}" clip-path="url(#pc)"/>`
       : `<circle cx="0" cy="0" r="${AVATAR_R}" fill="#21262d"/>`;
 
-    const handle = esc(profile ? `@${profile.login}` : "Master Diff");
+    const handle = esc(profile ? `@${profile.login}` : "Lineage");
     const big = commas(profile?.totalContributions ?? snapshot.summary.commits);
     const sum = snapshot.summary;
     const since = profile ? `LIFETIME CONTRIBUTIONS · PUBLIC + PRIVATE` : "LIFETIME CONTRIBUTIONS";
