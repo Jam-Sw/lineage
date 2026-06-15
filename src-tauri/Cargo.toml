@@ -3,13 +3,13 @@ members = ["core"]
 resolver = "2"
 
 [package]
-name = "masterdiff"
+name = "lineage"
 version = "0.1.0"
-description = "Master Diff - your lifetime GitHub master diff in the menu bar"
+description = "Lineage - your GitHub lifetime, live in the menu bar"
 edition = "2021"
 
 [lib]
-name = "masterdiff_lib"
+name = "lineage_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -17,6 +17,6 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
-masterdiff-core = { path = "core" }
+lineage-core = { path = "core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

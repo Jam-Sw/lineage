@@ -1,5 +1,5 @@
 //! The deep sync engine: discover repos, clone/fetch, run author-filtered numstat,
-//! bucket by language, and aggregate into the lifetime master diff.
+//! bucket by language, and aggregate into the lifetime diff.
 
 pub mod git;
 

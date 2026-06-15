@@ -42,9 +42,9 @@
 </script>
 
 <main>
-  <h1>Master Diff</h1>
+  <h1>Lineage</h1>
   <p class="dim">
-    Connect GitHub to compute your lifetime master diff - every line you have added and
+    Connect GitHub to compute your Lineage - every line you have added and
     removed, by language, across all your repositories.
   </p>
 

@@ -1,6 +1,6 @@
-//! Master Diff core - pure domain logic with no Tauri dependency.
+//! Lineage core - pure domain logic with no Tauri dependency.
 //! GitHub repo discovery (REST), the churn engine (clone + `git log --numstat`),
-//! language mapping, scope rules, and aggregation into the lifetime "master diff".
+//! language mapping, scope rules, and aggregation into the lifetime "Lineage".
 
 pub mod aggregate;
 pub mod credential;

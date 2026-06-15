@@ -1,4 +1,4 @@
-//! Fold per-repo churn into the lifetime master diff: a `Summary`, a per-language
+//! Fold per-repo churn into the lifetime diff: a `Summary`, a per-language
 //! breakdown, and a per-repo table. Includes fork/mirror dedup. All pure.
 
 use crate::languages;

@@ -47,7 +47,7 @@ Prove the engine against your own account without the UI:
 
 ```sh
 cd src-tauri/core
-GH_TOKEN=$(gh auth token) cargo run --example master_diff_m0
+GH_TOKEN=$(gh auth token) cargo run --example lineage_m0
 ```
 
 ## Connect

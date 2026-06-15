@@ -1,7 +1,7 @@
 {
-  "name": "master-diff",
+  "name": "lineage",
   "version": "0.1.0",
-  "description": "Master Diff - your lifetime GitHub master diff in the menu bar",
+  "description": "Lineage - your GitHub lifetime, live in the menu bar",
   "type": "module",
   "private": true,
   "license": "UNLICENSED",

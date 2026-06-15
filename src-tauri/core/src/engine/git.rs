@@ -124,8 +124,8 @@ mod tests {
 
     #[test]
     fn clone_dir_is_flat_and_safe() {
-        let d = clone_dir(Path::new("/cache"), "Jam-Sw/master-diff");
-        assert_eq!(d, PathBuf::from("/cache/Jam-Sw__master-diff.git"));
+        let d = clone_dir(Path::new("/cache"), "Jam-Sw/lineage");
+        assert_eq!(d, PathBuf::from("/cache/Jam-Sw__lineage.git"));
     }
 
     #[test]

@@ -2193,6 +2193,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "lineage"
+version = "0.1.0"
+dependencies = [
+ "lineage-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
+name = "lineage-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "keyring",
+ "rayon",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+ "ureq",
+]
+
+[[package]]
 name = "linux-keyutils"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2250,32 +2276,6 @@ dependencies = [
  "log",
  "tendril",
  "web_atoms",
-]
-
-[[package]]
-name = "masterdiff"
-version = "0.1.0"
-dependencies = [
- "masterdiff-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
-]
-
-[[package]]
-name = "masterdiff-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "keyring",
- "rayon",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.18",
- "ureq",
 ]
 
 [[package]]

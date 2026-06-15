@@ -8,7 +8,7 @@ use crate::error::{AppError, Result};
 use crate::github::{GithubClient, User};
 use crate::sensitive::Sensitive;
 
-const KEYRING_SERVICE: &str = "com.masterdiff.app";
+const KEYRING_SERVICE: &str = "com.lineage.app";
 const KEYRING_ACCOUNT: &str = "github-token";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

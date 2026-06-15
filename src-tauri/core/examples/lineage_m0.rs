@@ -1,16 +1,16 @@
 //! M0 proof: discover all in-scope repos for the authenticated user, clone/fetch
 //! (reusing the cache), run author-filtered `git log --numstat`, and print the
-//! lifetime master diff both raw and with generated/vendored files excluded.
+//! lifetime diff both raw and with generated/vendored files excluded.
 //!
-//! Run:  GH_TOKEN=$(gh auth token) cargo run --example master_diff_m0
+//! Run:  GH_TOKEN=$(gh auth token) cargo run --example lineage_m0
 //! Env:  MD_CACHE=<dir>  MD_EMAILS=a@x,b@y  to override the cache dir / identities.
 
-use masterdiff_core::aggregate::{self, Rollup};
-use masterdiff_core::engine::{self, git};
-use masterdiff_core::github::GithubClient;
-use masterdiff_core::numstat::{self, ChurnOptions};
-use masterdiff_core::sensitive::Sensitive;
-use masterdiff_core::types::Scope;
+use lineage_core::aggregate::{self, Rollup};
+use lineage_core::engine::{self, git};
+use lineage_core::github::GithubClient;
+use lineage_core::numstat::{self, ChurnOptions};
+use lineage_core::sensitive::Sensitive;
+use lineage_core::types::Scope;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -21,7 +21,7 @@ fn main() {
     }
 }
 
-fn run() -> masterdiff_core::Result<()> {
+fn run() -> lineage_core::Result<()> {
     let token = token();
     let cache = cache_dir();
     let client = GithubClient::new(token.expose().clone());
@@ -66,7 +66,7 @@ fn run() -> masterdiff_core::Result<()> {
     let raw = aggregate::rollup(&raw_churns);
     let filtered = aggregate::rollup(&filtered_churns);
 
-    println!("\n================ LIFETIME MASTER DIFF ================");
+    println!("\n================ LIFETIME Lineage ================");
     headline("RAW (everything git reports)", &raw);
     headline("CODE (generated/vendored excluded)  <- the real number", &filtered);
 
@@ -129,10 +129,10 @@ fn cache_dir() -> PathBuf {
         return PathBuf::from(d);
     }
     let home = std::env::var("HOME").expect("HOME");
-    PathBuf::from(home).join(".cache/master-diff/clones")
+    PathBuf::from(home).join(".cache/lineage/clones")
 }
 
-fn emails(user: &masterdiff_core::github::User) -> Vec<String> {
+fn emails(user: &lineage_core::github::User) -> Vec<String> {
     if let Ok(list) = std::env::var("MD_EMAILS") {
         return list.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
     }
