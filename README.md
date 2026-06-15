@@ -2,6 +2,9 @@
 
 Your lifetime of GitHub contributions on one page, live in the menu bar.
 
+<img width="944" height="638" alt="image" src="https://github.com/user-attachments/assets/a63b597a-4f26-4888-b334-58f2295befd8" />
+
+
 Lineage computes every line you have ever added and removed across your entire
 GitHub account, by language, and shows the net number live in your macOS menu bar.
 Click through for a dashboard: the headline diff, a per-language breakdown with the
