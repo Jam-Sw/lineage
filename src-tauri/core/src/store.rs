@@ -4,7 +4,9 @@
 //! the OS Keychain (see `credential`).
 
 use crate::error::{AppError, Result};
-use crate::types::{AppSettings, AuthStatus, CachedRepo, RepoChurn, Snapshot, SyncStatus};
+use crate::types::{
+    AppSettings, AppearanceSettings, AuthStatus, CachedRepo, RepoChurn, Snapshot, SyncStatus,
+};
 use rusqlite::Connection;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -46,6 +48,8 @@ const MIGRATIONS: &[&str] = &[
         churn_json TEXT NOT NULL,
         updated_at TEXT NOT NULL
     );",
+    // v3: clear the cache so churn is recomputed with commit counts.
+    "DELETE FROM repo_cache;",
 ];
 
 pub struct Store {
@@ -111,6 +115,32 @@ impl Store {
         self.conn
             .execute(
                 "INSERT INTO settings (key, value, updated_at) VALUES ('app', ?1, ?2)
+                 ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
+                (&value, Self::now()),
+            )
+            .map_err(|e| AppError::Storage(e.to_string()))?;
+        Ok(())
+    }
+
+    // ---- appearance (separate key; never clears the churn cache) ----
+
+    pub fn get_appearance(&self) -> Result<AppearanceSettings> {
+        let raw: Option<String> = self
+            .conn
+            .query_row("SELECT value FROM settings WHERE key = 'appearance'", [], |r| r.get(0))
+            .ok();
+        match raw {
+            Some(s) => serde_json::from_str(&s)
+                .map_err(|e| AppError::Storage(format!("appearance parse: {e}"))),
+            None => Ok(AppearanceSettings::default()),
+        }
+    }
+
+    pub fn set_appearance(&self, a: &AppearanceSettings) -> Result<()> {
+        let value = serde_json::to_string(a).map_err(|e| AppError::Storage(e.to_string()))?;
+        self.conn
+            .execute(
+                "INSERT INTO settings (key, value, updated_at) VALUES ('appearance', ?1, ?2)
                  ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
                 (&value, Self::now()),
             )

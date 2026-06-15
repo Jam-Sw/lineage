@@ -1,7 +1,14 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import * as api from "$lib/api/client";
-  import type { Snapshot, SyncStatus, AuthStatus, SyncTick, RepoStat } from "$lib/api/types";
+  import type {
+    Snapshot,
+    SyncStatus,
+    AuthStatus,
+    SyncTick,
+    RepoStat,
+    AppearanceSettings,
+  } from "$lib/api/types";
   import { commas, signed, relativeTime } from "$lib/format";
   import LiveReveal from "$lib/components/LiveReveal.svelte";
   import LanguageBars from "$lib/components/LanguageBars.svelte";
@@ -16,6 +23,12 @@
   let feed = $state<FeedItem[]>([]);
   let syncingLive = $state(false);
   let error = $state<string | null>(null);
+  let appearance = $state<AppearanceSettings>({
+    trayIcon: "plusMinus",
+    trayShowNumber: true,
+    trayMetric: "net",
+    barStyle: "language",
+  });
 
   let sortKey = $state<"net" | "added" | "removed" | "name">("net");
   let sortDir = $state<1 | -1>(-1);
@@ -75,10 +88,14 @@
       auth = e.payload;
       void load();
     });
+    api.listen<AppearanceSettings>("appearance:changed", (e) => {
+      appearance = e.payload;
+    });
   });
 
   async function load() {
     auth = await api.authStatus();
+    appearance = await api.getAppearance();
     snapshot = await api.getSnapshot();
     await refreshSync();
     if (syncStatus?.syncing) syncingLive = true;
@@ -127,9 +144,11 @@
       net={tick?.net ?? 0}
       added={tick?.added ?? 0}
       removed={tick?.removed ?? 0}
+      commits={tick?.commits ?? 0}
       done={tick?.done ?? 0}
       total={tick?.total ?? syncStatus?.reposTotal ?? 0}
       languages={tick?.languages ?? []}
+      barStyle={appearance.barStyle}
       {feed}
     />
   {:else if snapshot}
@@ -141,7 +160,10 @@
         <div class="sub">
           <span class="add">+{commas(snapshot.summary.added)}</span>
           <span class="remove">−{commas(snapshot.summary.removed)}</span>
-          <span class="dim">· {snapshot.summary.repoCount} repos · {snapshot.summary.languageCount} languages</span>
+          <span class="dim"
+            >· {commas(snapshot.summary.commits)} commits · {snapshot.summary.repoCount} repos · {snapshot
+              .summary.languageCount} languages</span
+          >
           {#if snapshot.languages[0]}
             <span class="fav">★ {snapshot.languages[0].language}</span>
           {/if}
@@ -175,7 +197,7 @@
 
     <section>
       <h2>By language</h2>
-      <LanguageBars languages={snapshot.languages} />
+      <LanguageBars languages={snapshot.languages} style={appearance.barStyle} />
     </section>
 
     <section>

@@ -6,7 +6,8 @@ use masterdiff_core::credential::{self, CredentialSource, TokenStore};
 use masterdiff_core::github::GithubClient;
 use masterdiff_core::numstat::ChurnOptions;
 use masterdiff_core::types::{
-    AppSettings, AuthStatus, LanguageStat, RepoChurn, Scope, Snapshot, SyncStatus,
+    AppSettings, AppearanceSettings, AuthStatus, LanguageStat, RepoChurn, Scope, Snapshot, Summary,
+    SyncStatus,
 };
 use masterdiff_core::{aggregate, engine, AppError, Store};
 use serde::Serialize;
@@ -52,10 +53,12 @@ struct SyncTickPayload {
     repo_added: u64,
     repo_removed: u64,
     repo_top_language: Option<String>,
+    repo_commits: u64,
     from_cache: bool,
     added: u64,
     removed: u64,
     net: i64,
+    commits: u64,
     languages: Vec<LanguageStat>,
 }
 
@@ -68,10 +71,12 @@ impl SyncTickPayload {
             repo_added: 0,
             repo_removed: 0,
             repo_top_language: None,
+            repo_commits: 0,
             from_cache: false,
             added: 0,
             removed: 0,
             net: 0,
+            commits: 0,
             languages: Vec::new(),
         }
     }
@@ -82,6 +87,7 @@ impl SyncTickPayload {
 struct RunningAgg {
     added: u64,
     removed: u64,
+    commits: u64,
     per_language: BTreeMap<String, (u64, u64)>,
 }
 
@@ -89,6 +95,7 @@ impl RunningAgg {
     fn add(&mut self, c: &RepoChurn) {
         self.added += c.added;
         self.removed += c.removed;
+        self.commits += c.commits;
         for (lang, (a, r)) in &c.per_language {
             let e = self.per_language.entry(lang.clone()).or_insert((0, 0));
             e.0 += a;
@@ -104,10 +111,12 @@ impl RunningAgg {
             repo_added: rr.churn.added,
             repo_removed: rr.churn.removed,
             repo_top_language: rr.churn.top_language(),
+            repo_commits: rr.churn.commits,
             from_cache: rr.from_cache,
             added: self.added,
             removed: self.removed,
             net: self.added as i64 - self.removed as i64,
+            commits: self.commits,
             languages: aggregate::language_stats(&self.per_language)
                 .into_iter()
                 .take(14)
@@ -160,6 +169,23 @@ fn set_settings(
     }
     let _ = app.emit("settings:changed", &settings);
     Ok(settings)
+}
+
+#[tauri::command]
+fn get_appearance(state: State<'_, AppState>) -> CmdResult<AppearanceSettings> {
+    Ok(store_lock(&state)?.get_appearance()?)
+}
+
+#[tauri::command]
+fn set_appearance(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    appearance: AppearanceSettings,
+) -> CmdResult<AppearanceSettings> {
+    store_lock(&state)?.set_appearance(&appearance)?;
+    refresh_tray(&app);
+    let _ = app.emit("appearance:changed", &appearance);
+    Ok(appearance)
 }
 
 // ---- auth commands ----
@@ -347,7 +373,7 @@ fn run_sync(app: &AppHandle) -> masterdiff_core::Result<()> {
         last_synced_at,
     };
     lock_store(&state)?.set_snapshot(&snapshot)?;
-    set_tray_title(app, &abbrev_signed(snapshot.summary.net));
+    refresh_tray(app);
     let _ = app.emit("sync:done", &snapshot);
     Ok(())
 }
@@ -401,10 +427,10 @@ fn human_size(bytes: u64) -> String {
     }
 }
 
-/// A colored git-diff-style menu-bar icon: three rounded bars - green (added),
-/// gray (context), red (removed). Drawn as RGBA pixels (no asset needed), at 4x
-/// then downscaled with alpha-coverage averaging for clean anti-aliased edges.
-fn diff_tray_icon() -> tauri::image::Image<'static> {
+/// Rasterize rounded-rect shapes (x0,y0,x1,y1,radius,color as 0..1 fractions of a
+/// square) into a colored RGBA menu-bar icon. Drawn at 4x then downscaled with
+/// alpha-coverage averaging for clean anti-aliased edges. No asset needed.
+fn rasterize(shapes: &[(f32, f32, f32, f32, f32, [u8; 3])]) -> tauri::image::Image<'static> {
     const W: usize = 36;
     const H: usize = 36;
     const S: usize = 4; // supersample factor
@@ -412,22 +438,16 @@ fn diff_tray_icon() -> tauri::image::Image<'static> {
     let bh = H * S;
     let mut hi = vec![0u8; bw * bh * 4];
 
-    // (center-y, half-height, x0, x1, color) as 0..1 fractions of the square.
-    let bars: [(f32, f32, f32, f32, [u8; 3]); 3] = [
-        (0.30, 0.085, 0.16, 0.86, [63, 185, 80]),   // green  (added)
-        (0.50, 0.072, 0.16, 0.58, [139, 148, 158]), // gray   (context)
-        (0.70, 0.085, 0.16, 0.86, [248, 81, 73]),   // red    (removed)
-    ];
-
     for py in 0..bh {
         let fy = (py as f32 + 0.5) / bh as f32;
         for px in 0..bw {
             let fx = (px as f32 + 0.5) / bw as f32;
-            for &(cy, hh, x0, x1, col) in bars.iter() {
-                let in_core = fx >= x0 + hh && fx <= x1 - hh && (fy - cy).abs() <= hh;
-                let dl = ((fx - (x0 + hh)).powi(2) + (fy - cy).powi(2)).sqrt();
-                let dr = ((fx - (x1 - hh)).powi(2) + (fy - cy).powi(2)).sqrt();
-                if in_core || dl <= hh || dr <= hh {
+            for &(x0, y0, x1, y1, r, col) in shapes {
+                let nx = fx.clamp(x0 + r, x1 - r);
+                let ny = fy.clamp(y0 + r, y1 - r);
+                let dx = fx - nx;
+                let dy = fy - ny;
+                if dx * dx + dy * dy <= r * r {
                     let i = (py * bw + px) * 4;
                     hi[i] = col[0];
                     hi[i + 1] = col[1];
@@ -469,16 +489,72 @@ fn diff_tray_icon() -> tauri::image::Image<'static> {
     tauri::image::Image::new(leaked, W as u32, H as u32)
 }
 
+const GREEN: [u8; 3] = [63, 185, 80];
+const GRAY: [u8; 3] = [139, 148, 158];
+const RED: [u8; 3] = [248, 81, 73];
+
+/// Build the configured menu-bar icon. "none" yields a transparent image so the
+/// status item still shows its title.
+fn tray_icon(style: &str) -> tauri::image::Image<'static> {
+    match style {
+        "diffBars" => rasterize(&[
+            (0.16, 0.215, 0.86, 0.385, 0.085, GREEN),
+            (0.16, 0.425, 0.58, 0.575, 0.075, GRAY),
+            (0.16, 0.615, 0.86, 0.785, 0.085, RED),
+        ]),
+        "none" => rasterize(&[]),
+        // "plusMinus" (default): a green plus over a red minus.
+        _ => rasterize(&[
+            (0.28, 0.29, 0.72, 0.41, 0.04, GREEN), // plus: horizontal arm
+            (0.44, 0.18, 0.56, 0.52, 0.04, GREEN), // plus: vertical arm
+            (0.28, 0.64, 0.72, 0.76, 0.04, RED),   // minus
+        ]),
+    }
+}
+
 /// Abbreviate a signed net diff for the menu bar: `+388k`, `-1.2M`, `+512`.
 fn abbrev_signed(n: i64) -> String {
-    let sign = if n >= 0 { "+" } else { "-" };
-    let a = n.unsigned_abs();
+    format!("{}{}", if n >= 0 { "+" } else { "-" }, abbrev_unsigned(n.unsigned_abs()))
+}
+
+fn abbrev_unsigned(a: u64) -> String {
     if a >= 1_000_000 {
-        format!("{sign}{:.1}M", a as f64 / 1_000_000.0)
+        format!("{:.1}M", a as f64 / 1_000_000.0)
     } else if a >= 1_000 {
-        format!("{sign}{}k", a / 1_000)
+        format!("{}k", a / 1_000)
     } else {
-        format!("{sign}{a}")
+        format!("{a}")
+    }
+}
+
+/// The menu-bar title text for the current appearance + summary.
+fn tray_title(a: &AppearanceSettings, summary: Option<&Summary>) -> Option<String> {
+    if !a.tray_show_number {
+        return None;
+    }
+    match summary {
+        None => Some("-".to_string()),
+        Some(s) if a.tray_metric == "addedRemoved" => {
+            Some(format!("+{} \u{2212}{}", abbrev_unsigned(s.added), abbrev_unsigned(s.removed)))
+        }
+        Some(s) => Some(abbrev_signed(s.net)),
+    }
+}
+
+/// Re-render the tray icon + title from the stored appearance and latest snapshot.
+fn refresh_tray(app: &AppHandle) {
+    let state = app.state::<AppState>();
+    let guard = match state.store.lock() {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let appearance = guard.get_appearance().unwrap_or_default();
+    let summary = guard.get_snapshot().ok().flatten().map(|snap| snap.summary);
+    drop(guard);
+    if let Some(tray) = app.tray_by_id("main-tray") {
+        let _ = tray.set_icon(Some(tray_icon(&appearance.tray_icon)));
+        let _ = tray.set_icon_as_template(false);
+        let _ = tray.set_title(tray_title(&appearance, summary.as_ref()).as_deref());
     }
 }
 
@@ -490,6 +566,8 @@ pub fn run() {
             get_sync_status,
             get_settings,
             set_settings,
+            get_appearance,
+            set_appearance,
             gh_available,
             connect_via_gh,
             connect_via_pat,
@@ -512,7 +590,8 @@ pub fn run() {
                 .map_err(|e| format!("cannot open store: {e}"))?;
 
             let connected = store.auth_status().map(|a| a.connected).unwrap_or(false);
-            let net = store.get_snapshot().ok().flatten().map(|s| s.summary.net);
+            let appearance = store.get_appearance().unwrap_or_default();
+            let summary = store.get_snapshot().ok().flatten().map(|s| s.summary);
             let cache_dir = dir.join("clones");
 
             app.manage(AppState {
@@ -555,7 +634,7 @@ pub fn run() {
                 ],
             )?;
             let tray = TrayIconBuilder::with_id("main-tray")
-                .icon(diff_tray_icon())
+                .icon(tray_icon(&appearance.tray_icon))
                 .icon_as_template(false)
                 .menu(&menu)
                 .show_menu_on_left_click(true)
@@ -572,8 +651,7 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
-            let title = net.map(|n| abbrev_signed(n)).unwrap_or_else(|| "-".to_string());
-            let _ = tray.set_title(Some(title));
+            let _ = tray.set_title(tray_title(&appearance, summary.as_ref()).as_deref());
 
             // Windows hide to the tray instead of quitting.
             for label in ["dashboard", "onboarding"] {

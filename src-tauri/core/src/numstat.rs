@@ -98,6 +98,7 @@ pub fn churn_for_repo(full_name: &str, raw: &str, opts: &ChurnOptions) -> RepoCh
         per_language,
         added,
         removed,
+        commits: 0,
     }
 }
 

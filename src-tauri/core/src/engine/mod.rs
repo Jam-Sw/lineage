@@ -94,7 +94,8 @@ fn process_repo(
     }
     let dir = git::clone_or_fetch(cache_dir, repo, token)?;
     let raw = git::numstat(&dir, authors)?;
-    let churn = numstat::churn_for_repo(&repo.full_name, &raw, opts);
+    let mut churn = numstat::churn_for_repo(&repo.full_name, &raw, opts);
+    churn.commits = git::commit_count(&dir, authors);
     Ok(RepoResult { churn, pushed_at: repo.pushed_at.clone(), from_cache: false })
 }
 

@@ -67,6 +67,18 @@ input[type="password"] {
   width: 100%;
 }
 
+select {
+  font: inherit;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 8px;
+  border-radius: 8px;
+}
+select:disabled {
+  opacity: 0.5;
+}
+
 a {
   color: var(--accent);
 }

@@ -16,17 +16,21 @@
     net,
     added,
     removed,
+    commits,
     done,
     total,
     languages,
+    barStyle = "language",
     feed,
   }: {
     net: number;
     added: number;
     removed: number;
+    commits: number;
     done: number;
     total: number;
     languages: LanguageStat[];
+    barStyle?: string;
     feed: FeedItem[];
   } = $props();
 
@@ -57,7 +61,7 @@
     <div class="subline">
       <span class="add">+{commas(added)}</span>
       <span class="remove">−{commas(removed)}</span>
-      <span class="dim">net lines, building your master diff…</span>
+      <span class="dim">· {commas(commits)} commits, building your master diff…</span>
     </div>
     <div class="prog">
       <div class="track"><div class="fill" style="width:{pct}%"></div></div>
@@ -69,7 +73,7 @@
     <div class="col">
       <h3>Languages emerging</h3>
       {#if languages.length}
-        <LanguageBars {languages} />
+        <LanguageBars {languages} style={barStyle} />
       {:else}
         <p class="dim small">waiting for the first results…</p>
       {/if}

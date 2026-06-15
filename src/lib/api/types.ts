@@ -4,6 +4,7 @@ export interface Summary {
   added: number;
   removed: number;
   net: number;
+  commits: number;
   repoCount: number;
   languageCount: number;
 }
@@ -22,6 +23,7 @@ export interface RepoStat {
   added: number;
   removed: number;
   net: number;
+  commits: number;
   topLanguage: string | null;
 }
 
@@ -64,9 +66,18 @@ export interface SyncTick {
   repoAdded: number;
   repoRemoved: number;
   repoTopLanguage: string | null;
+  repoCommits: number;
   fromCache: boolean;
   added: number;
   removed: number;
   net: number;
+  commits: number;
   languages: LanguageStat[];
+}
+
+export interface AppearanceSettings {
+  trayIcon: string;
+  trayShowNumber: boolean;
+  trayMetric: string;
+  barStyle: string;
 }

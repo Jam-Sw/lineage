@@ -56,6 +56,25 @@ pub fn clone_or_fetch(cache_dir: &Path, repo: &RepoMeta, token: &Sensitive<Strin
     Ok(dir)
 }
 
+/// Count author-filtered commits across all branches (no merges).
+pub fn commit_count(repo_dir: &Path, authors_regex: &str) -> u64 {
+    let out = Command::new("git")
+        .args([
+            "-C",
+            &repo_dir.to_string_lossy(),
+            "rev-list",
+            "--count",
+            "--all",
+            "--no-merges",
+            &format!("--author={authors_regex}"),
+        ])
+        .output();
+    out.ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
+        .unwrap_or(0)
+}
+
 /// Author-filtered churn across all branches. `authors_regex` is a git BRE
 /// (emails joined with `\|`).
 pub fn numstat(repo_dir: &Path, authors_regex: &str) -> Result<String> {

@@ -57,11 +57,13 @@ pub fn rollup(churns: &[RepoChurn]) -> Rollup {
     let mut lang_totals: BTreeMap<String, (u64, u64)> = BTreeMap::new();
     let mut total_added = 0u64;
     let mut total_removed = 0u64;
+    let mut total_commits = 0u64;
     let mut repos: Vec<RepoStat> = Vec::new();
 
     for churn in churns {
         total_added += churn.added;
         total_removed += churn.removed;
+        total_commits += churn.commits;
 
         let mut top: Option<(String, u64)> = None;
         for (lang, (a, r)) in &churn.per_language {
@@ -79,6 +81,7 @@ pub fn rollup(churns: &[RepoChurn]) -> Rollup {
             added: churn.added,
             removed: churn.removed,
             net: churn.net(),
+            commits: churn.commits,
             top_language: top.map(|(l, _)| l),
         });
     }
@@ -90,6 +93,7 @@ pub fn rollup(churns: &[RepoChurn]) -> Rollup {
         added: total_added,
         removed: total_removed,
         net: total_added as i64 - total_removed as i64,
+        commits: total_commits,
         repo_count: churns.len(),
         language_count: languages.len(),
     };
@@ -110,7 +114,7 @@ mod tests {
             added += a;
             removed += r;
         }
-        RepoChurn { full_name: name.into(), per_language, added, removed }
+        RepoChurn { full_name: name.into(), per_language, added, removed, commits: 1 }
     }
 
     #[test]
@@ -123,6 +127,7 @@ mod tests {
         assert_eq!(r.summary.added, 355);
         assert_eq!(r.summary.removed, 36);
         assert_eq!(r.summary.net, 319);
+        assert_eq!(r.summary.commits, 2);
         assert_eq!(r.summary.repo_count, 2);
         // Python has the most churn (220), then TypeScript (165), then Rust (6).
         assert_eq!(r.languages[0].language, "Python");

@@ -4,6 +4,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
+  AppearanceSettings,
   AuthStatus,
   Snapshot,
   SyncStatus,
@@ -36,6 +37,9 @@ export const getSyncStatus = () => call<SyncStatus>("get_sync_status");
 export const getSettings = () => call<AppSettings>("get_settings");
 export const setSettings = (settings: AppSettings) =>
   call<AppSettings>("set_settings", { settings });
+export const getAppearance = () => call<AppearanceSettings>("get_appearance");
+export const setAppearance = (appearance: AppearanceSettings) =>
+  call<AppearanceSettings>("set_appearance", { appearance });
 
 // auth
 export const ghAvailable = () => call<boolean>("gh_available");

@@ -16,11 +16,14 @@ export function signed(n: number): string {
 }
 
 export function abbrev(n: number): string {
-  const sign = n >= 0 ? "+" : "-";
+  return (n >= 0 ? "+" : "-") + abbrevU(n);
+}
+
+export function abbrevU(n: number): string {
   const a = Math.abs(n);
-  if (a >= 1_000_000) return `${sign}${(a / 1_000_000).toFixed(1)}M`;
-  if (a >= 1_000) return `${sign}${Math.round(a / 1_000)}k`;
-  return `${sign}${a}`;
+  if (a >= 1_000_000) return `${(a / 1_000_000).toFixed(1)}M`;
+  if (a >= 1_000) return `${Math.round(a / 1_000)}k`;
+  return `${a}`;
 }
 
 export function relativeTime(iso: string | null): string {

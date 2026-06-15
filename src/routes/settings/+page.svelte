@@ -2,9 +2,10 @@
   import { onMount } from "svelte";
   import { goto } from "$app/navigation";
   import * as api from "$lib/api/client";
-  import type { AppSettings, AuthStatus } from "$lib/api/types";
+  import type { AppSettings, AppearanceSettings, AuthStatus } from "$lib/api/types";
 
   let settings = $state<AppSettings | null>(null);
+  let appearance = $state<AppearanceSettings | null>(null);
   let auth = $state<AuthStatus>({ connected: false, source: null, login: null });
   let emailsText = $state("");
   let cache = $state("…");
@@ -14,9 +15,15 @@
   onMount(async () => {
     settings = await api.getSettings();
     emailsText = settings.extraEmails.join(", ");
+    appearance = await api.getAppearance();
     auth = await api.authStatus();
     void refreshCache();
   });
+
+  // Appearance changes apply live (tray + dashboard react immediately).
+  async function saveAppearance() {
+    if (appearance) await api.setAppearance(appearance);
+  }
 
   async function refreshCache() {
     try {
@@ -66,6 +73,42 @@
     <a href="/" class="back">← Dashboard</a>
     <h1>Settings</h1>
   </header>
+
+  {#if appearance}
+    <section>
+      <h2>Appearance</h2>
+      <label class="field">
+        <span>Menu bar icon</span>
+        <select bind:value={appearance.trayIcon} onchange={saveAppearance}>
+          <option value="plusMinus">Green + / red −</option>
+          <option value="diffBars">Diff bars</option>
+          <option value="none">None (number only)</option>
+        </select>
+      </label>
+      <label class="row">
+        <input type="checkbox" bind:checked={appearance.trayShowNumber} onchange={saveAppearance} />
+        <span><b>Show the number in the menu bar</b></span>
+      </label>
+      <label class="field">
+        <span>Number shows</span>
+        <select
+          bind:value={appearance.trayMetric}
+          onchange={saveAppearance}
+          disabled={!appearance.trayShowNumber}
+        >
+          <option value="net">Net diff (+388k)</option>
+          <option value="addedRemoved">Added and removed (+388k −97k)</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Dashboard bars</span>
+        <select bind:value={appearance.barStyle} onchange={saveAppearance}>
+          <option value="language">Language color</option>
+          <option value="diff">Added / removed split</option>
+        </select>
+      </label>
+    </section>
+  {/if}
 
   {#if settings}
     <section>
@@ -158,6 +201,14 @@
     margin: 0 0 12px;
   }
   .small {
+    font-size: 13px;
+  }
+  .field {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 7px 0;
     font-size: 13px;
   }
   .row {

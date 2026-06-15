@@ -60,6 +60,8 @@ pub struct RepoChurn {
     pub per_language: BTreeMap<String, (u64, u64)>,
     pub added: u64,
     pub removed: u64,
+    #[serde(default)]
+    pub commits: u64,
 }
 
 impl RepoChurn {
@@ -105,6 +107,8 @@ pub struct RepoStat {
     pub added: u64,
     pub removed: u64,
     pub net: i64,
+    #[serde(default)]
+    pub commits: u64,
     pub top_language: Option<String>,
 }
 
@@ -115,6 +119,8 @@ pub struct Summary {
     pub added: u64,
     pub removed: u64,
     pub net: i64,
+    #[serde(default)]
+    pub commits: u64,
     pub repo_count: usize,
     pub language_count: usize,
 }
@@ -173,6 +179,32 @@ impl Default for AppSettings {
             include_archived: true,
             exclude_generated: true,
             extra_emails: Vec::new(),
+        }
+    }
+}
+
+/// Visual preferences, persisted separately from scope settings so changing them
+/// never invalidates the churn cache.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppearanceSettings {
+    /// Menu-bar icon style: "plusMinus", "diffBars", or "none".
+    pub tray_icon: String,
+    /// Show the net/added-removed number next to the icon.
+    pub tray_show_number: bool,
+    /// "net" or "addedRemoved".
+    pub tray_metric: String,
+    /// Dashboard language bars: "language" (Linguist color) or "diff" (green/red split).
+    pub bar_style: String,
+}
+
+impl Default for AppearanceSettings {
+    fn default() -> Self {
+        AppearanceSettings {
+            tray_icon: "plusMinus".into(),
+            tray_show_number: true,
+            tray_metric: "net".into(),
+            bar_style: "language".into(),
         }
     }
 }
