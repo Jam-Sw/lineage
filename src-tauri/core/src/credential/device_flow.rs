@@ -10,7 +10,7 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 /// Set this to the OAuth App client id (public; ship in the binary). Empty = unconfigured.
-pub const CLIENT_ID: &str = "";
+pub const CLIENT_ID: &str = "Ov23ligjZkyhamxAek0U";
 /// Scope required to read and clone private repos.
 const SCOPE: &str = "repo";
 
