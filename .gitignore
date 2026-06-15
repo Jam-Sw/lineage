@@ -1,0 +1,12 @@
+node_modules/
+/build
+/.svelte-kit
+target/
+/src-tauri/gen/
+.DS_Store
+.cache/
+*.log
+
+# Local-only working files (mirrors InstantNotes)
+.claude/
+/CLAUDE.md
