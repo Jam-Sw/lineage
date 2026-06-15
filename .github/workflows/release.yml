@@ -1,0 +1,50 @@
+# Push a v* tag and GitHub builds, signs, and publishes the release,
+# including the latest.json manifest the in-app updater polls.
+# Requires repo secrets: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # macos-latest runners are arm64; we ship Apple Silicon only.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Lineage ${{ github.ref_name }}"
+          releaseDraft: true
+          includeUpdaterJson: true
+          releaseBody: |
+            Apple Silicon only. **Download the `.dmg`**, open it, drag Lineage to Applications. The other assets serve the in-app updater.
+
+            The app is not notarized, so macOS blocks the first launch. Run:
+
+            `xattr -d com.apple.quarantine /Applications/Lineage.app`
+
+            or use System Settings > Privacy & Security > "Open Anyway" after the blocked launch. First install only: existing installs update themselves from inside the app.
