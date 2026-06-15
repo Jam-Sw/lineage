@@ -49,6 +49,10 @@ export const ghAvailable = () => call<boolean>("gh_available");
 export const connectViaGh = () => call<AuthStatus>("connect_via_gh");
 export const connectViaPat = (token: string) =>
   call<AuthStatus>("connect_via_pat", { token });
+export type OauthStart = { userCode: string; verificationUri: string; expiresIn: number };
+// Starts the device flow and returns the code to show; the backend polls and
+// finishes the connect, or emits an "oauth:error" event.
+export const connectViaOauth = () => call<OauthStart>("connect_via_oauth");
 export const disconnect = () => call<AuthStatus>("disconnect");
 
 // actions. Returns false when a sync was already running.

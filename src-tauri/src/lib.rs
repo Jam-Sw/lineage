@@ -261,6 +261,47 @@ fn connect_via_pat(
     finish_connect(&state, &app)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OauthStart {
+    user_code: String,
+    verification_uri: String,
+    expires_in: u64,
+}
+
+/// Begin the GitHub OAuth device flow: return the code to show the user, then
+/// poll in the background and finish the connect (or emit `oauth:error`) when the
+/// user authorizes, the code expires, or polling fails.
+#[tauri::command]
+fn connect_via_oauth(app: AppHandle) -> CmdResult<OauthStart> {
+    let code = credential::device_flow::start()?;
+    let start = OauthStart {
+        user_code: code.user_code.clone(),
+        verification_uri: code.verification_uri.clone(),
+        expires_in: code.expires_in,
+    };
+    std::thread::spawn(move || {
+        match credential::device_flow::poll_blocking(&code, || false) {
+            Ok(token) => match credential::connect(token, CredentialSource::Device) {
+                Ok((user, src)) => {
+                    let state = app.state::<AppState>();
+                    if let Ok(s) = store_lock(&state) {
+                        let _ = s.set_credential_meta(src.as_str(), &user.login);
+                    }
+                    let _ = finish_connect(&state, &app);
+                }
+                Err(e) => {
+                    let _ = app.emit("oauth:error", e.to_string());
+                }
+            },
+            Err(e) => {
+                let _ = app.emit("oauth:error", e.to_string());
+            }
+        }
+    });
+    Ok(start)
+}
+
 fn finish_connect(state: &State<'_, AppState>, app: &AppHandle) -> CmdResult<AuthStatus> {
     let status = store_lock(state)?.auth_status()?;
     let _ = app.emit("auth:changed", &status);
@@ -955,6 +996,7 @@ pub fn run() {
             gh_available,
             connect_via_gh,
             connect_via_pat,
+            connect_via_oauth,
             disconnect,
             sync_now,
             open_url,

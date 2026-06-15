@@ -9,14 +9,41 @@
   // The git tree connecting the title to the login wakes up the moment a
   // connection is attempted: gray lineage turns to living color.
   let alive = $state(false);
+  // While the device flow is in progress, the code the user enters in the browser.
+  let oauth = $state<{ userCode: string; verificationUri: string } | null>(null);
 
-  onMount(async () => {
-    try {
-      ghAvailable = await api.ghAvailable();
-    } catch {
-      ghAvailable = false;
-    }
+  onMount(() => {
+    let unlisten: (() => void) | undefined;
+    void (async () => {
+      try {
+        ghAvailable = await api.ghAvailable();
+      } catch {
+        ghAvailable = false;
+      }
+      unlisten = await api.listen<string>("oauth:error", (e) => {
+        error = String(e.payload);
+        busy = false;
+        oauth = null;
+        alive = false;
+      });
+    })();
+    return () => unlisten?.();
   });
+
+  async function connectOauth() {
+    alive = true;
+    busy = true;
+    error = null;
+    try {
+      const s = await api.connectViaOauth();
+      oauth = { userCode: s.userCode, verificationUri: s.verificationUri };
+      await api.openUrl(s.verificationUri);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      busy = false;
+      alive = false;
+    }
+  }
 
   async function connectGh() {
     alive = true;
@@ -82,9 +109,8 @@
 
   <div class="right">
     <div class="methods">
-      <button class="primary big" disabled title="not in this release sorry :(">
-        Github OAuth
-        <span class="soon">beta</span>
+      <button class="primary big" onclick={connectOauth} disabled={busy}>
+        Sign in with GitHub
       </button>
 
       {#if ghAvailable}
@@ -98,7 +124,15 @@
       </div>
     </div>
 
-    {#if busy}<p class="dim status">Connecting…</p>{/if}
+    {#if oauth}
+      <div class="device">
+        <p>Enter this code at <b>github.com/login/device</b>:</p>
+        <p class="code-big">{oauth.userCode}</p>
+        <button onclick={() => oauth && api.openUrl(oauth.verificationUri)}>Open GitHub again</button>
+      </div>
+    {:else if busy}
+      <p class="dim status">Connecting…</p>
+    {/if}
     {#if error}<p class="remove status">{error}</p>{/if}
   </div>
 </main>
@@ -151,15 +185,6 @@
     font-size: 15px;
     position: relative;
   }
-  .soon {
-    position: absolute;
-    right: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    font-size: 10px;
-    text-transform: uppercase;
-    opacity: 0.7;
-  }
   .pat {
     display: flex;
     flex-direction: column;
@@ -174,6 +199,21 @@
   .status {
     margin: 0;
     font-size: 13px;
+  }
+  .device {
+    margin-top: 4px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+  }
+  .device p {
+    margin: 0 0 6px;
+    font-size: 13px;
+  }
+  .code-big {
+    font-family: var(--mono);
+    font-size: 22px;
+    letter-spacing: 3px;
+    font-weight: 600;
   }
 
   /* --- git tree --- */
