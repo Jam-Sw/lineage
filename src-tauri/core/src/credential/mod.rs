@@ -1,11 +1,14 @@
-//! Credential layer: one token store (macOS Keychain via `keyring`) fed by three
-//! sources - OAuth device flow, the `gh` CLI, or a pasted PAT. The token never
-//! touches SQLite or logs; only its source/login metadata is persisted.
+//! Credential layer: one token store (the OS credential store via `keyring`:
+//! macOS Keychain, Windows Credential Manager, or the Linux Secret Service) fed
+//! by three sources - OAuth device flow, the `gh` CLI, or a pasted PAT. The
+//! token never touches SQLite or logs; only its source/login metadata is
+//! persisted.
 
 pub mod device_flow;
 
 use crate::error::{AppError, Result};
 use crate::github::{GithubClient, User};
+use crate::proc;
 use crate::sensitive::Sensitive;
 
 const KEYRING_SERVICE: &str = "com.lineage.app";
@@ -28,7 +31,7 @@ impl CredentialSource {
     }
 }
 
-/// Keychain-backed token storage.
+/// Token storage backed by the OS credential store.
 pub struct TokenStore;
 
 impl TokenStore {
@@ -64,9 +67,11 @@ pub fn validate(token: &Sensitive<String>) -> Result<User> {
     GithubClient::new(token.expose().clone()).get_user()
 }
 
-/// Resolve the `gh` binary. A Finder-launched app gets a minimal PATH that omits
-/// Homebrew, so check the common install locations before falling back to PATH.
+/// Resolve the `gh` binary. A Finder-launched macOS app gets a minimal PATH that
+/// omits Homebrew, so check the common install locations before falling back to
+/// PATH; on Windows and Linux the PATH lookup finds `gh` (or `gh.exe`) directly.
 fn gh_bin() -> String {
+    #[cfg(target_os = "macos")]
     for candidate in ["/opt/homebrew/bin/gh", "/usr/local/bin/gh"] {
         if std::path::Path::new(candidate).exists() {
             return candidate.to_string();
@@ -77,7 +82,7 @@ fn gh_bin() -> String {
 
 /// Read a token from the `gh` CLI (`gh auth token`).
 pub fn from_gh_cli() -> Result<Sensitive<String>> {
-    let out = std::process::Command::new(gh_bin())
+    let out = proc::command(&gh_bin())
         .args(["auth", "token"])
         .output()
         .map_err(|_| AppError::Auth("gh CLI not found on PATH".into()))?;
@@ -95,7 +100,7 @@ pub fn from_gh_cli() -> Result<Sensitive<String>> {
 
 /// True if the `gh` CLI is available and logged in (for showing the fast path).
 pub fn gh_cli_available() -> bool {
-    std::process::Command::new(gh_bin())
+    proc::command(&gh_bin())
         .args(["auth", "token"])
         .output()
         .map(|o| o.status.success())

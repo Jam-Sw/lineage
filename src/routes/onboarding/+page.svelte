@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import * as api from "$lib/api/client";
+  import { isMac, keychainName } from "$lib/platform";
 
   let ghAvailable = $state(false);
   let pat = $state("");
@@ -81,8 +82,9 @@
       removed, by language, across all your repositories.
     </p>
     <p class="foot dim">
-      Your token stays in the macOS Keychain. Lineage talks only to GitHub: it downloads your
-      repositories to this Mac and counts your lines here. Nothing is uploaded to a server of ours.
+      Your token stays in the {keychainName}. Lineage talks only to GitHub: it downloads your
+      repositories to this {isMac ? "Mac" : "computer"} and counts your lines here. Nothing is
+      uploaded to a server of ours.
     </p>
   </div>
 

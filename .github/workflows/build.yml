@@ -1,0 +1,47 @@
+# Cross-platform build gate: every PR and push to main must compile, type-check,
+# and pass tests on all three shipping platforms. `tauri build --no-bundle` runs
+# the full production pipeline (frontend build, per-platform config resolution,
+# release compile) without bundling, so no signing secrets are needed here.
+name: Build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Tauri system dependencies (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - run: npm ci
+
+      - run: npm run check
+
+      - run: npm test
+
+      - run: cargo test --workspace --manifest-path src-tauri/Cargo.toml
+
+      - run: npm run tauri -- build --no-bundle

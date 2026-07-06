@@ -3,10 +3,21 @@
 //! lazy-fetch. Re-sync is an incremental `git fetch`.
 
 use crate::error::{AppError, Result};
+use crate::proc;
 use crate::sensitive::Sensitive;
 use crate::types::RepoMeta;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+/// Turn a spawn failure into a Git error, with a friendly message when the git
+/// binary itself is missing (the common case on a fresh Windows machine).
+fn spawn_error(e: std::io::Error) -> AppError {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        AppError::Git("git not found. Install Git and make sure it is on PATH".into())
+    } else {
+        AppError::Git(format!("git failed to start: {e}"))
+    }
+}
 
 /// Cache path for a repo's bare clone, e.g. `<cache>/owner__name.git`.
 pub fn clone_dir(cache_dir: &Path, full_name: &str) -> PathBuf {
@@ -23,7 +34,7 @@ pub fn clone_or_fetch(cache_dir: &Path, repo: &RepoMeta, token: &Sensitive<Strin
     let token_str = token.expose();
     if dir.exists() {
         run(
-            Command::new("git").args([
+            proc::command("git").args([
                 "-C",
                 &dir.to_string_lossy(),
                 "fetch",
@@ -42,7 +53,7 @@ pub fn clone_or_fetch(cache_dir: &Path, repo: &RepoMeta, token: &Sensitive<Strin
             token_str, repo.full_name
         );
         run(
-            Command::new("git").args([
+            proc::command("git").args([
                 "clone",
                 "--quiet",
                 "--bare",
@@ -58,7 +69,7 @@ pub fn clone_or_fetch(cache_dir: &Path, repo: &RepoMeta, token: &Sensitive<Strin
 
 /// Count author-filtered commits across all branches (no merges).
 pub fn commit_count(repo_dir: &Path, authors_regex: &str) -> u64 {
-    let out = Command::new("git")
+    let out = proc::command("git")
         .args([
             "-C",
             &repo_dir.to_string_lossy(),
@@ -78,7 +89,7 @@ pub fn commit_count(repo_dir: &Path, authors_regex: &str) -> u64 {
 /// Author-filtered churn across all branches. `authors_regex` is a git BRE
 /// (emails joined with `\|`).
 pub fn numstat(repo_dir: &Path, authors_regex: &str) -> Result<String> {
-    let out = Command::new("git")
+    let out = proc::command("git")
         .args([
             "-C",
             &repo_dir.to_string_lossy(),
@@ -90,7 +101,7 @@ pub fn numstat(repo_dir: &Path, authors_regex: &str) -> Result<String> {
             "--numstat",
         ])
         .output()
-        .map_err(|e| AppError::Git(format!("git log failed to start: {e}")))?;
+        .map_err(spawn_error)?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         return Err(AppError::Git(format!("git log: {}", err.trim())));
@@ -100,9 +111,7 @@ pub fn numstat(repo_dir: &Path, authors_regex: &str) -> Result<String> {
 
 /// Run a command, mapping failure to `AppError::Git` with the token redacted.
 fn run(cmd: &mut Command, token: &str) -> Result<()> {
-    let out = cmd
-        .output()
-        .map_err(|e| AppError::Git(format!("git failed to start: {e}")))?;
+    let out = cmd.output().map_err(spawn_error)?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
         return Err(AppError::Git(redact(err.trim(), token)));

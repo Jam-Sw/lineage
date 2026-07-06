@@ -19,6 +19,7 @@ use std::time::Duration;
 use tauri::menu::{AboutMetadata, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_opener::OpenerExt;
 
 const REPO_URL: &str = "https://github.com/Jam-Sw/lineage";
 const BUNDLE_ID: &str = "com.lineage.app";
@@ -337,8 +338,8 @@ fn sync_now(app: AppHandle) -> CmdResult<bool> {
 }
 
 #[tauri::command]
-fn open_url(url: String) {
-    open_with_system(&url);
+fn open_url(app: AppHandle, url: String) {
+    let _ = app.opener().open_url(&url, None::<&str>);
 }
 
 #[tauri::command]
@@ -354,7 +355,7 @@ fn open_onboarding(app: AppHandle) {
 #[tauri::command]
 fn open_data_folder(app: AppHandle) {
     if let Ok(dir) = app.path().app_data_dir() {
-        open_with_system(&dir.to_string_lossy());
+        let _ = app.opener().open_path(dir.to_string_lossy(), None::<&str>);
     }
 }
 
@@ -399,6 +400,20 @@ fn clear_cache(state: State<'_, AppState>) -> CmdResult<()> {
 /// The bundle removal is deferred to a detached helper that waits for this
 /// process to exit, since a running app cannot cleanly delete its own bundle.
 /// The GitHub account itself is never touched - only the local token copy.
+///
+/// macOS only: Windows installs carry a real NSIS uninstaller and a Linux
+/// AppImage is deleted as a file, so the in-app flow (and its menu entry and
+/// settings section) exists only where the platform has no native answer.
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn uninstall_app(_app: AppHandle) -> CmdResult<()> {
+    Err(CmdError {
+        code: "UNSUPPORTED".into(),
+        message: "uninstall Lineage through your system's app management".into(),
+    })
+}
+
+#[cfg(target_os = "macos")]
 #[tauri::command]
 fn uninstall_app(app: AppHandle) -> CmdResult<()> {
     // 1. The token in the macOS Keychain.
@@ -474,7 +489,7 @@ fn save_tree_image(app: AppHandle, data_b64: String, login: String) -> CmdResult
     std::fs::write(&path, &bytes)
         .map_err(|e| CmdError { code: "STORAGE_ERROR".into(), message: e.to_string() })?;
     let display = path.to_string_lossy().to_string();
-    let _ = std::process::Command::new("open").arg("-R").arg(&display).spawn();
+    let _ = app.opener().reveal_item_in_dir(&path);
     Ok(display)
 }
 
@@ -673,9 +688,39 @@ fn lock_store<'a>(state: &'a State<'_, AppState>) -> lineage_core::Result<std::s
 
 // ---- tray + windows ----
 
+/// Show the disconnected/idle metric. On macOS that is the status-item title;
+/// Windows and Linux have no title text, so reset to the glyph icon and let the
+/// tooltip carry the state (refresh_tray draws the number into the icon when
+/// there is one).
 fn set_tray_title(app: &AppHandle, title: &str) {
     if let Some(tray) = app.tray_by_id("main-tray") {
-        let _ = tray.set_title(Some(title));
+        #[cfg(target_os = "macos")]
+        {
+            let _ = tray.set_title(Some(title));
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let style = app
+                .state::<AppState>()
+                .store
+                .lock()
+                .ok()
+                .and_then(|s| s.get_appearance().ok())
+                .unwrap_or_default()
+                .tray_icon;
+            let _ = tray.set_icon(Some(tray_icon(&style)));
+            let _ = tray.set_tooltip(Some(tray_tooltip(Some(title))));
+        }
+    }
+}
+
+/// The hover text for the tray icon off macOS, mirroring the exact metric the
+/// macOS title would show (the in-icon digits are approximate at 16px).
+#[cfg(not(target_os = "macos"))]
+fn tray_tooltip(title: Option<&str>) -> String {
+    match title {
+        Some(t) if t != "-" => format!("Lineage {t}"),
+        _ => "Lineage".to_string(),
     }
 }
 
@@ -710,10 +755,6 @@ fn close_choice(app: &AppHandle) -> CloseChoice {
         "quit" => CloseChoice::Quit,
         _ => CloseChoice::Ask,
     }
-}
-
-fn open_with_system(target: &str) {
-    let _ = std::process::Command::new("open").arg(target).spawn();
 }
 
 /// Bring the dashboard window forward and navigate it to the Settings page,
@@ -834,17 +875,115 @@ fn tray_icon(style: &str) -> tauri::image::Image<'static> {
     }
 }
 
+// ---- number-in-icon rendering (Windows/Linux) ----
+// Off macOS the tray has no title text, so the live number IS the icon: digit
+// rows drawn with a 3x5 pixel font at the largest integer scale that fits,
+// colored by sign like the rest of the app. Signs are dropped (color carries
+// them) to spend the pixels on digits.
+
+/// 3x5 glyphs for the characters `abbrev_unsigned` can produce, rows top-down,
+/// low three bits per row.
+#[cfg(not(target_os = "macos"))]
+fn glyph3x5(c: char) -> Option<[u8; 5]> {
+    Some(match c {
+        '0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+        '1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+        '2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+        '3' => [0b111, 0b001, 0b111, 0b001, 0b111],
+        '4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+        '5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+        '6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+        '7' => [0b111, 0b001, 0b010, 0b010, 0b010],
+        '8' => [0b111, 0b101, 0b111, 0b101, 0b111],
+        '9' => [0b111, 0b101, 0b111, 0b001, 0b111],
+        '.' => [0b000, 0b000, 0b000, 0b000, 0b010],
+        'k' => [0b100, 0b101, 0b110, 0b110, 0b101],
+        'M' => [0b101, 0b111, 0b111, 0b101, 0b101],
+        _ => return None,
+    })
+}
+
+/// Render one or two rows of digits into a 36x36 icon. Each row is drawn at the
+/// largest integer scale that fits the width, centered; unknown characters are
+/// skipped rather than failing the whole icon.
+#[cfg(not(target_os = "macos"))]
+fn tray_number_icon(rows: &[(String, [u8; 3])]) -> tauri::image::Image<'static> {
+    const W: usize = 36;
+    const H: usize = 36;
+    let mut out = vec![0u8; W * H * 4];
+
+    let glyph_rows: Vec<(Vec<[u8; 5]>, [u8; 3])> = rows
+        .iter()
+        .map(|(text, col)| (text.chars().filter_map(glyph3x5).collect(), *col))
+        .filter(|(glyphs, _)| !glyphs.is_empty())
+        .collect();
+    if glyph_rows.is_empty() {
+        let leaked: &'static [u8] = Box::leak(out.into_boxed_slice());
+        return tauri::image::Image::new(leaked, W as u32, H as u32);
+    }
+
+    let band = H / glyph_rows.len();
+    for (row_idx, (glyphs, col)) in glyph_rows.iter().enumerate() {
+        // Text is n glyphs of 3 columns plus 1 column between glyphs.
+        let text_w = glyphs.len() * 4 - 1;
+        let scale = (W / text_w).min((band - 1) / 5).max(1);
+        let x0 = (W - text_w * scale) / 2;
+        let y0 = row_idx * band + (band - 5 * scale) / 2;
+        for (gi, glyph) in glyphs.iter().enumerate() {
+            for (gy, bits) in glyph.iter().enumerate() {
+                for gx in 0..3 {
+                    if bits & (0b100 >> gx) == 0 {
+                        continue;
+                    }
+                    for sy in 0..scale {
+                        for sx in 0..scale {
+                            let x = x0 + (gi * 4 + gx) * scale + sx;
+                            let y = y0 + gy * scale + sy;
+                            if x < W && y < H {
+                                let i = (y * W + x) * 4;
+                                out[i] = col[0];
+                                out[i + 1] = col[1];
+                                out[i + 2] = col[2];
+                                out[i + 3] = 255;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let leaked: &'static [u8] = Box::leak(out.into_boxed_slice());
+    tauri::image::Image::new(leaked, W as u32, H as u32)
+}
+
+/// The number rows for the icon: added over removed for the two-figure metric,
+/// otherwise the net, with sign carried by color.
+#[cfg(not(target_os = "macos"))]
+fn tray_number_rows(a: &AppearanceSettings, s: &Summary) -> Vec<(String, [u8; 3])> {
+    if a.tray_metric == "addedRemoved" {
+        vec![
+            (abbrev_unsigned(s.added), GREEN),
+            (abbrev_unsigned(s.removed), RED),
+        ]
+    } else {
+        let col = if s.net >= 0 { GREEN } else { RED };
+        vec![(abbrev_unsigned(s.net.unsigned_abs()), col)]
+    }
+}
+
 // ---- menu-bar "working" spinner ----
 
 const SPINNER_FRAMES: usize = 8;
 const SPINNER_W: u32 = 36;
 const SPINNER_H: u32 = 36;
 
-/// Build one frame of a ring-of-dots spinner as a 36x36 RGBA buffer. The image is
-/// black with the shape carried entirely in the alpha channel, so shown as a macOS
-/// template image it tints itself for a light or dark menu bar. The bright "head"
-/// dot is at `frame`'s position and the others fade around the ring (a comet),
-/// which reads as motion as the head advances frame to frame.
+/// Build one frame of a ring-of-dots spinner as a 36x36 RGBA buffer. The shape
+/// is carried in the alpha channel over a neutral gray fill: as a macOS template
+/// image the alpha is the mask and the system tints it for the menu bar, while
+/// Windows/Linux trays show the gray directly. The bright "head" dot is at
+/// `frame`'s position and the others fade around the ring (a comet), which reads
+/// as motion as the head advances frame to frame.
 fn build_spinner_rgba(frame: usize) -> &'static [u8] {
     const S: usize = 4; // supersample for clean anti-aliased dots
     const N: usize = SPINNER_FRAMES;
@@ -887,8 +1026,13 @@ fn build_spinner_rgba(frame: usize) -> &'static [u8] {
                     acc += best;
                 }
             }
-            // RGB stays 0 (black); template tinting uses the alpha as the mask.
-            out[(y * w + x) * 4 + 3] = (acc / samples * 255.0).round() as u8;
+            // Neutral gray so the spinner is visible on Windows/Linux trays;
+            // on macOS template tinting ignores RGB and uses alpha as the mask.
+            let i = (y * w + x) * 4;
+            out[i] = GRAY[0];
+            out[i + 1] = GRAY[1];
+            out[i + 2] = GRAY[2];
+            out[i + 3] = (acc / samples * 255.0).round() as u8;
         }
     }
     Box::leak(out.into_boxed_slice())
@@ -962,7 +1106,9 @@ fn tray_title(a: &AppearanceSettings, summary: Option<&Summary>) -> Option<Strin
     }
 }
 
-/// Re-render the tray icon + title from the stored appearance and latest snapshot.
+/// Re-render the tray from the stored appearance and latest snapshot. On macOS
+/// the number is the status-item title next to the glyph icon; on Windows and
+/// Linux it is drawn into the icon itself, with the exact value in the tooltip.
 fn refresh_tray(app: &AppHandle) {
     let state = app.state::<AppState>();
     let guard = match state.store.lock() {
@@ -973,9 +1119,24 @@ fn refresh_tray(app: &AppHandle) {
     let summary = guard.get_snapshot().ok().flatten().map(|snap| snap.summary);
     drop(guard);
     if let Some(tray) = app.tray_by_id("main-tray") {
-        let _ = tray.set_icon(Some(tray_icon(&appearance.tray_icon)));
-        let _ = tray.set_icon_as_template(false);
-        let _ = tray.set_title(tray_title(&appearance, summary.as_ref()).as_deref());
+        #[cfg(target_os = "macos")]
+        {
+            let _ = tray.set_icon(Some(tray_icon(&appearance.tray_icon)));
+            let _ = tray.set_icon_as_template(false);
+            let _ = tray.set_title(tray_title(&appearance, summary.as_ref()).as_deref());
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let icon = match &summary {
+                Some(s) if appearance.tray_show_number => {
+                    tray_number_icon(&tray_number_rows(&appearance, s))
+                }
+                _ => tray_icon(&appearance.tray_icon),
+            };
+            let _ = tray.set_icon(Some(icon));
+            let title = tray_title(&appearance, summary.as_ref());
+            let _ = tray.set_tooltip(Some(tray_tooltip(title.as_deref())));
+        }
     }
 }
 
@@ -983,6 +1144,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             auth_status,
             get_snapshot,
@@ -1020,7 +1182,6 @@ pub fn run() {
 
             let connected = store.auth_status().map(|a| a.connected).unwrap_or(false);
             let appearance = store.get_appearance().unwrap_or_default();
-            let summary = store.get_snapshot().ok().flatten().map(|s| s.summary);
             let cache_dir = dir.join("clones");
 
             app.manage(AppState {
@@ -1052,16 +1213,28 @@ pub fn run() {
                 &[&about, &PredefinedMenuItem::separator(app)?, &repo, &data],
             )?;
             // Help groups support and the clean uninstall together: we help the
-            // user while they stay, and help them leave cleanly if they go.
+            // user while they stay, and help them leave cleanly if they go. The
+            // uninstall entry is macOS-only; Windows and Linux uninstall through
+            // the system (NSIS uninstaller, delete the AppImage).
             let issue = MenuItem::with_id(app, "open_issue", "Open an Issue", true, None::<&str>)?;
-            let uninstall_mi =
-                MenuItem::with_id(app, "open_uninstall", "Uninstall Lineage…", true, None::<&str>)?;
-            let help = Submenu::with_items(
-                app,
-                "Help",
-                true,
-                &[&issue, &PredefinedMenuItem::separator(app)?, &uninstall_mi],
-            )?;
+            #[cfg(target_os = "macos")]
+            let help = {
+                let uninstall_mi = MenuItem::with_id(
+                    app,
+                    "open_uninstall",
+                    "Uninstall Lineage…",
+                    true,
+                    None::<&str>,
+                )?;
+                Submenu::with_items(
+                    app,
+                    "Help",
+                    true,
+                    &[&issue, &PredefinedMenuItem::separator(app)?, &uninstall_mi],
+                )?
+            };
+            #[cfg(not(target_os = "macos"))]
+            let help = Submenu::with_items(app, "Help", true, &[&issue])?;
             let quit = MenuItem::with_id(app, "quit", "Quit Lineage", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
@@ -1075,7 +1248,7 @@ pub fn run() {
                     &quit,
                 ],
             )?;
-            let tray = TrayIconBuilder::with_id("main-tray")
+            TrayIconBuilder::with_id("main-tray")
                 .icon(tray_icon(&appearance.tray_icon))
                 .icon_as_template(false)
                 .menu(&menu)
@@ -1085,19 +1258,26 @@ pub fn run() {
                     "sync_now" => {
                         spawn_sync(app.clone());
                     }
-                    "open_repo" => open_with_system(REPO_URL),
-                    "open_issue" => open_with_system(&format!("{REPO_URL}/issues")),
+                    "open_repo" => {
+                        let _ = app.opener().open_url(REPO_URL, None::<&str>);
+                    }
+                    "open_issue" => {
+                        let _ = app
+                            .opener()
+                            .open_url(format!("{REPO_URL}/issues"), None::<&str>);
+                    }
                     "open_uninstall" => open_settings(app),
                     "open_data" => {
                         if let Ok(dir) = app.path().app_data_dir() {
-                            open_with_system(&dir.to_string_lossy());
+                            let _ = app.opener().open_path(dir.to_string_lossy(), None::<&str>);
                         }
                     }
                     "quit" => app.exit(0),
                     _ => {}
                 })
                 .build(app)?;
-            let _ = tray.set_title(tray_title(&appearance, summary.as_ref()).as_deref());
+            // First paint of the metric (title, or number-in-icon off macOS).
+            refresh_tray(app.handle());
 
             // Closing the dashboard is the one lifecycle choice we hand the user:
             // idle to the menu bar (the menu-bar-app norm) or actually quit - one

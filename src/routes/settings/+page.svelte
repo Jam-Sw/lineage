@@ -4,6 +4,7 @@
   import { getVersion } from "@tauri-apps/api/app";
   import * as api from "$lib/api/client";
   import { updater } from "$lib/stores/updater.svelte";
+  import { isMac } from "$lib/platform";
   import type { AppSettings, AppearanceSettings, AuthStatus } from "$lib/api/types";
 
   let settings = $state<AppSettings | null>(null);
@@ -273,6 +274,9 @@
         >. Happy to help.
       </p>
 
+      <!-- The in-app uninstall is macOS-only: Windows has the NSIS uninstaller
+           and a Linux AppImage is deleted as a file. -->
+      {#if isMac}
       <div class="uninstall">
         <p class="small">
           <b>Uninstall Lineage.</b>
@@ -304,6 +308,7 @@
           </div>
         {/if}
       </div>
+      {/if}
     </section>
   {/if}
 </main>

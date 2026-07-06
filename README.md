@@ -1,32 +1,37 @@
 # Lineage
 
-Your lifetime of GitHub contributions on one page, live in the menu bar.
+Your lifetime of GitHub contributions on one page, live in the menu bar or system tray.
 
 <img width="944" height="638" alt="image" src="https://github.com/user-attachments/assets/a63b597a-4f26-4888-b334-58f2295befd8" />
 
 
 Lineage computes every line you have ever added and removed across your entire
-GitHub account, by language, and shows the net number live in your macOS menu bar.
-Click through for a dashboard: the headline diff, a per-language breakdown with the
-real GitHub language colors, and a sortable per-repository table.
+GitHub account, by language, and shows the net number live in your menu bar
+(macOS) or system tray (Windows and Linux). Click through for a dashboard: the
+headline diff, a per-language breakdown with the real GitHub language colors, and
+a sortable per-repository table.
 
 ## Features
 
-- **Lifetime diff in the menu bar**: the net of every line you have added and removed, by language, updated as it syncs
+- **Lifetime diff in the menu bar**: the net of every line you have added and removed, by language, updated as it syncs; on Windows and Linux the number is drawn into the tray icon itself
 - **Accurate by construction**: clones your repositories and parses `git log --numstat` for the commits you authored, the only way to split lifetime churn by language
 - **Real code, not noise**: generated and vendored files (node_modules, lockfiles, minified bundles) are excluded by default, with a toggle to include them
 - **Scope you control**: owned, organization, and collaborator repositories, with forks excluded by default and owner-only and archived toggles
 - **Incremental**: per-repository results are cached by the API `pushed_at`, so re-syncs only touch what changed
-- **Local and private**: your token lives in the macOS Keychain and the analysis runs entirely on your Mac; nothing you own is uploaded to any server of ours
+- **Local and private**: your token lives in the OS credential store (macOS Keychain, Windows Credential Manager, or the Linux Secret Service) and the analysis runs entirely on your machine; nothing you own is uploaded to any server of ours
 - **Self-updating**: the app checks GitHub Releases and installs new versions from inside the app
 
 ## Installation
 
-Lineage runs on macOS (Apple Silicon). Download the latest `.dmg` from the
-[releases page](../../releases), open it, and drag Lineage to Applications.
+Download the latest build for your platform from the [releases page](../../releases).
+The builds are unsigned, so each OS asks for a one-time confirmation on first
+launch; the in-app updater applies later versions without any of it.
 
-The app is not notarized, so macOS blocks the first launch with an "Apple could not
-verify" message. Clear the quarantine flag and it opens normally from then on:
+### macOS (Apple Silicon)
+
+Download the `.dmg`, open it, and drag Lineage to Applications. The app is not
+notarized, so macOS blocks the first launch with an "Apple could not verify"
+message. Clear the quarantine flag and it opens normally from then on:
 
 ```sh
 xattr -d com.apple.quarantine /Applications/Lineage.app
@@ -34,8 +39,26 @@ xattr -d com.apple.quarantine /Applications/Lineage.app
 
 Alternatively, after the blocked first launch, open System Settings, go to Privacy
 and Security, scroll down, and click "Open Anyway". On macOS 14 and earlier,
-right-click the app and choose Open instead. This is a first-install step only: the
-in-app updater applies later versions without any of it.
+right-click the app and choose Open instead.
+
+### Windows (x64)
+
+Download and run the `-setup.exe` installer. SmartScreen flags the unsigned build:
+click "More info", then "Run anyway". Lineage shells out to `git` during sync, so
+[Git for Windows](https://git-scm.com/download/win) must be installed and on PATH.
+
+### Linux (x64)
+
+Download the `.AppImage`, make it executable, and run it:
+
+```sh
+chmod +x Lineage_*.AppImage
+./Lineage_*.AppImage
+```
+
+Lineage idles in the system tray, so the desktop needs tray support (stock GNOME
+wants the AppIndicator extension). Token storage needs a Secret Service
+(gnome-keyring or KWallet), and `git` must be on PATH.
 
 To build from source instead, see [Development](#development).
 
@@ -43,9 +66,11 @@ To build from source instead, see [Development](#development).
 
 ### Prerequisites
 
-- macOS
-- [Rust](https://rustup.rs/) (stable)
+- macOS, Windows, or Linux, with `git` on PATH
+- [Rust](https://rustup.rs/) via rustup (the version is pinned by `rust-toolchain.toml`)
 - Node.js 22+
+- Linux only: the [Tauri system dependencies](https://v2.tauri.app/start/prerequisites/#linux) (webkit2gtk 4.1 and friends)
+- Windows only: the Visual Studio Build Tools with the C++ workload
 
 ### Run the app
 
@@ -78,10 +103,11 @@ GH_TOKEN=$(gh auth token) cargo run --example lineage_m0
 npm run tauri build
 ```
 
-Produces an `.app` bundle and `.dmg` under `src-tauri/target/release/bundle/`.
-Without an Apple Developer ID the bundle is ad-hoc signed and not notarized, so
+Produces the platform's bundles under `src-tauri/target/release/bundle/`: an
+`.app` and `.dmg` on macOS, an NSIS `-setup.exe` on Windows, and an `.AppImage`
+on Linux. The builds are unsigned (macOS is ad-hoc signed, not notarized), so
 downloaded copies require the first-launch steps under [Installation](#installation).
-Builds made locally on your own machine are not quarantined and open normally.
+Builds made locally on your own machine open normally.
 
 ### Release (with self-update)
 
@@ -101,7 +127,8 @@ CI signs the updater artifact with the minisign key stored in the repo secrets
 verifies downloads against the matching public key in `tauri.conf.json`. Release
 downloads must be publicly reachable for the in-app check to work.
 
-For a fully local release without CI, build with `TAURI_SIGNING_PRIVATE_KEY` set,
+For a fully local release without CI (macOS-only fallback: `make-update-manifest.sh`
+writes just the `darwin-aarch64` entry), build with `TAURI_SIGNING_PRIVATE_KEY` set,
 run `./scripts/make-update-manifest.sh`, and upload the dmg, `Lineage.app.tar.gz`,
 and `latest.json` with `gh release create`.
 
@@ -128,7 +155,7 @@ openspec/     Product specification and project conventions
 | Core (API, git engine, aggregation) | Rust (`lineage-core`) |
 | Storage | SQLite via rusqlite |
 | HTTP / clone | `ureq` (blocking) and the `git` CLI |
-| Token storage | macOS Keychain via `keyring` |
+| Token storage | OS credential store via `keyring` |
 | UI | Svelte 5 + TypeScript |
 | Testing | cargo test, Vitest, svelte-check |
 
@@ -157,5 +184,5 @@ A Jam-Sw project, developed privately.
 
 ## Status
 
-Apple Silicon only. The data engine is proven and tested; the menu-bar app,
-dashboard, and release pipeline are in place.
+macOS (Apple Silicon), Windows (x64), and Linux (x64). The data engine is proven
+and tested; the menu-bar app, dashboard, and release pipeline are in place.

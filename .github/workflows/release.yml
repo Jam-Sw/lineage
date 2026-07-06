@@ -1,5 +1,8 @@
-# Push a v* tag and GitHub builds, signs, and publishes the release,
-# including the latest.json manifest the in-app updater polls.
+# Push a v* tag and GitHub builds every platform and assembles a draft release,
+# including the latest.json manifest the in-app updater polls. The three matrix
+# jobs upload into one draft; tauri-action merges each platform into latest.json,
+# so the draft must stay unpublished until all jobs finish. Publish after the
+# smoke test to ship.
 # Requires repo secrets: TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
 name: Release
 
@@ -12,8 +15,15 @@ permissions:
 
 jobs:
   release:
-    # macos-latest runners are arm64; we ship Apple Silicon only.
-    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macos-latest runners are arm64; macOS ships Apple Silicon only.
+          - platform: macos-latest
+          - platform: ubuntu-22.04
+          - platform: windows-latest
+    runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
 
@@ -28,6 +38,12 @@ jobs:
         with:
           workspaces: src-tauri
 
+      - name: Install Tauri system dependencies (Linux)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
       - run: npm ci
 
       - uses: tauri-apps/tauri-action@v0
@@ -40,11 +56,14 @@ jobs:
           releaseName: "Lineage ${{ github.ref_name }}"
           releaseDraft: true
           includeUpdaterJson: true
+          updaterJsonPreferNsis: true
           releaseBody: |
-            Apple Silicon only. **Download the `.dmg`**, open it, drag Lineage to Applications. The other assets serve the in-app updater.
+            Download the build for your platform. The extra archives serve the in-app updater.
 
-            The app is not notarized, so macOS blocks the first launch. Run:
+            **macOS (Apple Silicon):** download the `.dmg`, open it, drag Lineage to Applications. The app is not notarized, so macOS blocks the first launch. Run `xattr -d com.apple.quarantine /Applications/Lineage.app` or use System Settings > Privacy & Security > "Open Anyway" after the blocked launch.
 
-            `xattr -d com.apple.quarantine /Applications/Lineage.app`
+            **Windows (x64):** download and run the `-setup.exe` installer. SmartScreen flags the unsigned build: click "More info", then "Run anyway".
 
-            or use System Settings > Privacy & Security > "Open Anyway" after the blocked launch. First install only: existing installs update themselves from inside the app.
+            **Linux (x64):** download the `.AppImage`, `chmod +x` it, and run it. Lineage lives in the system tray, so the desktop needs tray support (stock GNOME wants the AppIndicator extension).
+
+            First install only: existing installs update themselves from inside the app.

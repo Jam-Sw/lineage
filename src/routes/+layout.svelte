@@ -6,6 +6,7 @@
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import * as api from "$lib/api/client";
   import { updater } from "$lib/stores/updater.svelte";
+  import { isMac, trayName } from "$lib/platform";
 
   let { children } = $props();
 
@@ -57,14 +58,15 @@
     >
       <h2 id="close-title">Before you close…</h2>
       <p>
-        Lineage can keep running quietly in the menu bar so your Lineage stays a click
-        away - or it can fully quit, like the few Mac apps that actually close when you
-        close them.
+        Lineage can keep running quietly in the {trayName} so your Lineage stays a click
+        away - or it can fully quit{isMac
+          ? ", like the few Mac apps that actually close when you close them"
+          : ""}.
       </p>
       <p class="dim small">You can change this any time in Settings.</p>
       <div class="close-actions">
         <button onclick={() => choose("quit")}>Quit completely</button>
-        <button class="primary" onclick={() => choose("menuBar")}>Keep in menu bar</button>
+        <button class="primary" onclick={() => choose("menuBar")}>Keep in {trayName}</button>
       </div>
     </div>
   </div>

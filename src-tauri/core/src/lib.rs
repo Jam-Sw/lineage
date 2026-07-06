@@ -10,6 +10,7 @@ pub mod github;
 pub mod ignore;
 pub mod languages;
 pub mod numstat;
+pub(crate) mod proc;
 pub mod scope;
 pub mod sensitive;
 pub mod store;
