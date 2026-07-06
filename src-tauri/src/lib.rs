@@ -914,7 +914,7 @@ fn tray_number_icon(rows: &[(String, [u8; 3])]) -> tauri::image::Image<'static> 
 
     let glyph_rows: Vec<(Vec<[u8; 5]>, [u8; 3])> = rows
         .iter()
-        .map(|(text, col)| (text.chars().filter_map(glyph3x5).collect(), *col))
+        .map(|(text, col)| (text.chars().filter_map(glyph3x5).collect::<Vec<_>>(), *col))
         .filter(|(glyphs, _)| !glyphs.is_empty())
         .collect();
     if glyph_rows.is_empty() {
