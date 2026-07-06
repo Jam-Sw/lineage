@@ -1,0 +1,4 @@
+# One toolchain everywhere: rustup reads this on every cargo invocation, locally
+# and on all three CI runners, so builds cannot drift between machines.
+[toolchain]
+channel = "1.91.1"
