@@ -62,6 +62,24 @@ pub struct RepoChurn {
     pub removed: u64,
     #[serde(default)]
     pub commits: u64,
+    /// Where in the repo the churn landed, as a pruned folder tree. `None` for
+    /// churn cached before trees existed; such entries are recomputed.
+    #[serde(default)]
+    pub tree: Option<PathNode>,
+}
+
+/// One folder (or file, when `children` is empty) of a repo's churn tree.
+/// Pruned at build time, so it stays small enough to ship in the snapshot.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PathNode {
+    pub name: String,
+    pub added: u64,
+    pub removed: u64,
+    /// The language with the most churn under this node.
+    pub language: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub children: Vec<PathNode>,
 }
 
 impl RepoChurn {
@@ -110,6 +128,8 @@ pub struct RepoStat {
     #[serde(default)]
     pub commits: u64,
     pub top_language: Option<String>,
+    #[serde(default)]
+    pub tree: Option<PathNode>,
 }
 
 /// The headline numbers - the lifetime "Lineage".

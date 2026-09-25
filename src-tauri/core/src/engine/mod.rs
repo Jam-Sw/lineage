@@ -84,7 +84,7 @@ fn process_repo(
     cached: &HashMap<String, CachedRepo>,
 ) -> Result<RepoResult> {
     if let Some(c) = cached.get(&repo.full_name) {
-        if c.pushed_at.is_some() && c.pushed_at == repo.pushed_at {
+        if c.pushed_at.is_some() && c.pushed_at == repo.pushed_at && c.churn.tree.is_some() {
             return Ok(RepoResult {
                 churn: c.churn.clone(),
                 pushed_at: repo.pushed_at.clone(),

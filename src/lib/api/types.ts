@@ -25,6 +25,16 @@ export interface RepoStat {
   net: number;
   commits: number;
   topLanguage: string | null;
+  /** Where the churn landed: a pruned folder tree. Absent until the next sync. */
+  tree?: PathNode | null;
+}
+
+export interface PathNode {
+  name: string;
+  added: number;
+  removed: number;
+  language: string;
+  children?: PathNode[];
 }
 
 export interface Snapshot {

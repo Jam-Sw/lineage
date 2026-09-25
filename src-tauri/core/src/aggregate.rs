@@ -83,6 +83,7 @@ pub fn rollup(churns: &[RepoChurn]) -> Rollup {
             net: churn.net(),
             commits: churn.commits,
             top_language: top.map(|(l, _)| l),
+            tree: churn.tree.clone(),
         });
     }
 
@@ -114,7 +115,7 @@ mod tests {
             added += a;
             removed += r;
         }
-        RepoChurn { full_name: name.into(), per_language, added, removed, commits: 1 }
+        RepoChurn { full_name: name.into(), per_language, added, removed, commits: 1, tree: None }
     }
 
     #[test]
