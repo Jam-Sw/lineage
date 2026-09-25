@@ -5,7 +5,7 @@
 //! counts and are skipped. Rename rows carry an `old => new` path which
 //! `languages::classify` normalizes.
 
-use crate::types::RepoChurn;
+use crate::types::{PathNode, RepoChurn};
 use crate::{ignore, languages};
 use std::collections::BTreeMap;
 
@@ -77,6 +77,7 @@ pub fn churn_for_repo(full_name: &str, raw: &str, opts: &ChurnOptions) -> RepoCh
     let mut per_language: BTreeMap<String, (u64, u64)> = BTreeMap::new();
     let mut added = 0u64;
     let mut removed = 0u64;
+    let mut tree = Builder::default();
     for row in parse_rows(raw) {
         if opts.exclude_generated && ignore::is_generated(&row.path) {
             continue;
@@ -87,9 +88,10 @@ pub fn churn_for_repo(full_name: &str, raw: &str, opts: &ChurnOptions) -> RepoCh
             }
         }
         let lang = languages::classify(&row.path).name.to_string();
-        let entry = per_language.entry(lang).or_insert((0, 0));
+        let entry = per_language.entry(lang.clone()).or_insert((0, 0));
         entry.0 += row.added;
         entry.1 += row.removed;
+        tree.add(&final_path(&row.path), &lang, row.added, row.removed);
         added += row.added;
         removed += row.removed;
     }
@@ -99,6 +101,87 @@ pub fn churn_for_repo(full_name: &str, raw: &str, opts: &ChurnOptions) -> RepoCh
         added,
         removed,
         commits: 0,
+        tree: Some(tree.finish(full_name.rsplit('/').next().unwrap_or(full_name), added + removed)),
+    }
+}
+
+/// The path a numstat row ends up at. Renames come as `old => new` or
+/// `pre/{old => new}/post`; keep the prefix and suffix around the new part.
+fn final_path(path: &str) -> String {
+    let Some(arrow) = path.find(" => ") else { return path.to_string() };
+    match (path[..arrow].rfind('{'), path[arrow..].find('}')) {
+        (Some(open), Some(close)) => {
+            let close = arrow + close;
+            let joined = format!("{}{}{}", &path[..open], &path[arrow + 4..close], &path[close + 1..]);
+            joined.replace("//", "/")
+        }
+        _ => path[arrow + 4..].to_string(),
+    }
+}
+
+/// Deepest level kept, counting the repo root as 0. Files below it fold into their folder.
+const MAX_DEPTH: usize = 5;
+/// Children kept per node; the rest fold into one "N more" node.
+const MAX_CHILDREN: usize = 8;
+/// Nodes under this fraction of the whole repo's churn fold away too.
+const MIN_SHARE: f64 = 0.004;
+
+#[derive(Default)]
+struct Builder {
+    added: u64,
+    removed: u64,
+    langs: BTreeMap<String, u64>,
+    children: BTreeMap<String, Builder>,
+}
+
+impl Builder {
+    fn add(&mut self, path: &str, lang: &str, added: u64, removed: u64) {
+        let mut node = self;
+        let mut depth = 0;
+        loop {
+            node.added += added;
+            node.removed += removed;
+            *node.langs.entry(lang.to_string()).or_default() += added + removed;
+            if depth == MAX_DEPTH {
+                break;
+            }
+            let Some(part) = path.split('/').filter(|p| !p.is_empty()).nth(depth) else { break };
+            node = node.children.entry(part.to_string()).or_default();
+            depth += 1;
+        }
+    }
+
+    fn finish(self, name: &str, repo_total: u64) -> PathNode {
+        let language = self
+            .langs
+            .into_iter()
+            .max_by_key(|(_, n)| *n)
+            .map(|(l, _)| l)
+            .unwrap_or_else(|| "Other".into());
+        let floor = (repo_total as f64 * MIN_SHARE) as u64;
+        let mut kids: Vec<(String, Builder)> = self.children.into_iter().collect();
+        kids.sort_by(|a, b| (b.1.added + b.1.removed).cmp(&(a.1.added + a.1.removed)));
+        let mut children = Vec::new();
+        let (mut rest, mut rest_a, mut rest_r) = (0usize, 0u64, 0u64);
+        for (i, (kname, k)) in kids.into_iter().enumerate() {
+            if i < MAX_CHILDREN && k.added + k.removed > floor {
+                children.push(k.finish(&kname, repo_total));
+            } else {
+                rest += 1;
+                rest_a += k.added;
+                rest_r += k.removed;
+            }
+        }
+        if rest > 0 && rest_a + rest_r > floor {
+            children.push(PathNode {
+                name: format!("{rest} more"),
+                added: rest_a,
+                removed: rest_r,
+                language: language.clone(),
+                children: Vec::new(),
+            });
+        }
+        PathNode { name: name.to_string(), added: self.added, removed: self.removed, language, children }
     }
 }
 
@@ -131,6 +214,20 @@ mod tests {
         let raw = "4\t1\tsrc/{old.js => new.ts}\n";
         let churn = churn_for_repo("o/r", raw, &ChurnOptions::raw());
         assert_eq!(churn.per_language.get("TypeScript"), Some(&(4, 1)));
+    }
+
+    #[test]
+    fn builds_a_pruned_folder_tree() {
+        let raw = "10\t0\tsrc/a.ts\n5\t5\tsrc/lib/b.rs\n3\t0\tsrc/{old => new}/c.ts\n1\t0\tREADME.md\n";
+        let churn = churn_for_repo("me/app", raw, &ChurnOptions::raw());
+        let tree = churn.tree.unwrap();
+        assert_eq!(tree.name, "app");
+        assert_eq!(tree.added + tree.removed, 24);
+        let src = tree.children.iter().find(|c| c.name == "src").unwrap();
+        assert_eq!(src.added + src.removed, 23);
+        assert_eq!(src.language, "TypeScript");
+        assert!(src.children.iter().any(|c| c.name == "new"));
+        assert!(src.children.iter().all(|c| c.name != "{old"));
     }
 
     #[test]

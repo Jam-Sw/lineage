@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { Snapshot, ProfileStats } from "$lib/api/types";
+  import type { Snapshot, ProfileStats, PathNode } from "$lib/api/types";
   import { commas, signed } from "$lib/format";
   import * as api from "$lib/api/client";
 
@@ -8,7 +8,6 @@
 
   const TAU = Math.PI * 2;
   const AVATAR_R = 54;
-  const MAX_LEN = 430;
   const FALLBACK = "#8b949e";
   const BG = "#0f1115";
   const DIM = "#9aa3b2";
@@ -19,24 +18,8 @@
   const FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif";
   const MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace";
 
-  // Stable per-repo pseudo-randomness so the tree looks the same every render.
-  function strHash(s: string): number {
-    let h = 2166136261 >>> 0;
-    for (let i = 0; i < s.length; i++) {
-      h ^= s.charCodeAt(i);
-      h = Math.imul(h, 16777619);
-    }
-    return h >>> 0;
-  }
-  function mulberry(seed: number): () => number {
-    return () => {
-      seed = (seed + 0x6d2b79f5) | 0;
-      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
-  }
   const r1 = (n: number) => Math.round(n * 10) / 10;
+  const shortName = (full: string) => full.slice(full.indexOf("/") + 1);
 
   const langColor = $derived.by(() => {
     const m = new Map<string, string>();
@@ -44,74 +27,231 @@
     return m;
   });
 
-  type Branch = {
-    d: string;
-    color: string;
-    width: number;
-    delay: number;
-    repo: string;
-    lang: string | null;
-    net: number;
+  // The tree is one hierarchy drawn the same way at every level:
+  //   you -> language -> repository -> folder -> subfolder -> file.
+  // Each level branches from its parent's tip, fanned by share of lines, with
+  // width split by da Vinci's rule (children's cross-sections sum to the
+  // parent's). Deeper levels are small, so they only draw once you zoom in far
+  // enough to see them: the finer structure opens up as you go deeper.
+  type Src = {
+    name: string;
+    kind: "lang" | "repo" | "path";
+    added: number;
+    removed: number;
+    language: string;
     commits: number;
+    children: Src[];
   };
-  type Leaf = { x: number; y: number; r: number; color: string; delay: number };
+  type Node = {
+    id: number;
+    parent: number;
+    /** Index one past this node's last descendant (nodes are in pre-order). */
+    end: number;
+    depth: number;
+    kind: Src["kind"];
+    name: string;
+    trail: string[];
+    added: number;
+    removed: number;
+    color: string;
+    d: string;
+    width: number;
+    len: number;
+    ang: number;
+    x: number;
+    y: number;
+    leaf: boolean;
+    /** Bounds of this node and everything below it. */
+    box: [number, number, number, number];
+    delay: number;
+  };
+  type Label = { x: number; y: number; text: string; anchor: "start" | "end"; delay: number };
   type Dot = { x: number; y: number; size: number; color: string; delay: number };
 
+  const INNER = AVATAR_R + 26;
+  const LANG_LEN = 120;
+  const SWIRL = 0.16;
+  const PATH_SPREAD = 1.5;
+
+  function fromPath(p: PathNode): Src {
+    return {
+      name: p.name,
+      kind: "path",
+      added: p.added,
+      removed: p.removed,
+      language: p.language,
+      commits: 0,
+      children: (p.children ?? []).map(fromPath),
+    };
+  }
+
+  // Largest child in the middle of the fan, the rest alternating outward, so
+  // every fan is balanced and the heavy limb continues its parent's line.
+  function fanOrder<T>(sorted: T[]): T[] {
+    const out: T[] = [];
+    sorted.forEach((c, i) => (i % 2 ? out.unshift(c) : out.push(c)));
+    return out;
+  }
+  const churnOf = (s: { added: number; removed: number }) => s.added + s.removed;
+
   const layout = $derived.by(() => {
-    const repos = snapshot.repos.filter((r) => r.added + r.removed > 0);
-    const n = Math.max(1, repos.length);
-    const maxChurn = repos.reduce((m, r) => Math.max(m, r.added + r.removed), 1);
+    const repos = snapshot.repos.filter((r) => churnOf(r) > 0);
     const maxCommits = repos.reduce((m, r) => Math.max(m, r.commits), 1);
-
-    const branches: Branch[] = [];
-    const leaves: Leaf[] = [];
-
-    repos.forEach((repo, i) => {
-      const rnd = mulberry(strHash(repo.fullName));
-      const churn = repo.added + repo.removed;
-      const cf = Math.sqrt(churn / maxChurn);
-      const angle = (i / n) * TAU - Math.PI / 2 + (rnd() - 0.5) * (TAU / n) * 0.7;
-      const len = AVATAR_R + 56 + cf * (MAX_LEN - AVATAR_R - 56);
-      const width = 1.2 + cf * 6.5;
-      const color = langColor.get(repo.topLanguage ?? "") ?? FALLBACK;
-
-      const sx = Math.cos(angle) * AVATAR_R;
-      const sy = Math.sin(angle) * AVATAR_R;
-      const tx = Math.cos(angle) * len;
-      const ty = Math.sin(angle) * len;
-      const px = -Math.sin(angle);
-      const py = Math.cos(angle);
-      const sweep = (rnd() - 0.5) * len * 0.38;
-      const cxp = (sx + tx) / 2 + px * sweep;
-      const cyp = (sy + ty) / 2 + py * sweep;
-      const delay = i * 6;
-
-      branches.push({
-        d: `M ${r1(sx)} ${r1(sy)} Q ${r1(cxp)} ${r1(cyp)} ${r1(tx)} ${r1(ty)}`,
-        color,
-        width,
-        delay,
-        repo: repo.fullName,
-        lang: repo.topLanguage,
-        net: repo.net,
-        commits: repo.commits,
+    const byLang = new Map<string, Src>();
+    for (const r of repos) {
+      const lang = r.topLanguage ?? "Other";
+      const g = byLang.get(lang) ?? { name: lang, kind: "lang", added: 0, removed: 0, language: lang, commits: 0, children: [] };
+      g.added += r.added;
+      g.removed += r.removed;
+      g.commits += r.commits;
+      g.children.push({
+        name: shortName(r.fullName),
+        kind: "repo",
+        added: r.added,
+        removed: r.removed,
+        language: lang,
+        commits: r.commits,
+        children: (r.tree?.children ?? []).map(fromPath),
       });
+      byLang.set(lang, g);
+    }
+    const langs = [...byLang.values()].sort((x, y) => churnOf(y) - churnOf(x));
+    const total = langs.reduce((t, g) => t + churnOf(g), 0) || 1;
 
-      const commitFrac = repo.commits / maxCommits;
-      const leafN = Math.max(1, Math.min(12, Math.round(1 + commitFrac * 11)));
-      for (let k = 0; k < leafN; k++) {
-        const spread = (k - (leafN - 1) / 2) * 0.16;
-        const la = angle + spread + (rnd() - 0.5) * 0.05;
-        const lr = len + 6 + rnd() * 16;
-        leaves.push({
-          x: Math.cos(la) * lr,
-          y: Math.sin(la) * lr,
-          r: 1.4 + cf * 2.2 + rnd() * 1.4,
-          color,
-          delay: delay + 260 + k * 16,
-        });
-      }
-    });
+    let nodes: Node[] = [];
+    let order = 0;
+    // Lengths are relative; `fit` scales them so the whole tree fills the
+    // frame at the default zoom (measured on a first pass, applied on a second).
+    let fit = 1;
+
+    function grow(
+      src: Src,
+      parent: number,
+      depth: number,
+      trail: string[],
+      sx: number,
+      sy: number,
+      dir: number,
+      len: number,
+      width: number,
+      spread: number,
+    ): Node {
+      const color = langColor.get(src.language) ?? FALLBACK;
+      // A gentle, consistent bend (the same way at every level) so fans read
+      // as growth rather than spokes.
+      const bend = dir + SWIRL;
+      const reach = len * fit;
+      const x = sx + Math.cos(bend) * reach;
+      const y = sy + Math.sin(bend) * reach;
+      const qx = sx + Math.cos(dir) * reach * 0.55;
+      const qy = sy + Math.sin(dir) * reach * 0.55;
+      const here = [...trail, src.name];
+      const pad = width / 2 + 2;
+      const node: Node = {
+        id: nodes.length,
+        parent,
+        end: 0,
+        depth,
+        kind: src.kind,
+        name: src.name,
+        trail: here,
+        added: src.added,
+        removed: src.removed,
+        color,
+        d: `M ${r1(sx)} ${r1(sy)} Q ${r1(qx)} ${r1(qy)} ${r1(x)} ${r1(y)}`,
+        width,
+        len: reach,
+        ang: bend,
+        x,
+        y,
+        leaf: src.children.length === 0,
+        box: [Math.min(sx, x) - pad, Math.min(sy, y) - pad, Math.max(sx, x) + pad, Math.max(sy, y) + pad],
+        delay: depth <= 2 ? 150 + depth * 420 + (order++ % 60) * 9 : 0,
+      };
+      nodes.push(node);
+
+      const kids = [...src.children].sort((p, q) => churnOf(q) - churnOf(p));
+      const sum = kids.reduce((t, k) => t + churnOf(k), 0) || 1;
+      const fan = fanOrder(kids);
+      // Slots are sized by share, with a floor so a tiny limb still has room.
+      const floor = 0.3 / Math.max(kids.length, 1);
+      const slots = fan.map((k) => Math.max(churnOf(k) / sum, floor));
+      const slotSum = slots.reduce((t, w) => t + w, 0) || 1;
+      let a = bend - spread / 2;
+      fan.forEach((k, i) => {
+        const span = (slots[i] / slotSum) * spread;
+        const share = churnOf(k) / sum;
+        const childDir = a + span / 2;
+        a += span;
+        let childLen: number;
+        let childSpread: number;
+        if (k.kind === "repo") {
+          // Repositories: length is commits, so long-lived work reaches further.
+          const kf = Math.log1p(k.commits) / Math.log1p(maxCommits);
+          childLen = 55 + kf * 125;
+          childSpread = PATH_SPREAD * 1.05;
+        } else {
+          childLen = len * (0.5 + 0.28 * Math.sqrt(share));
+          childSpread = PATH_SPREAD;
+        }
+        const child = grow(k, node.id, depth + 1, here, x, y, childDir, childLen, Math.max(0.2, width * Math.sqrt(share)), childSpread);
+        node.box = [
+          Math.min(node.box[0], child.box[0]),
+          Math.min(node.box[1], child.box[1]),
+          Math.max(node.box[2], child.box[2]),
+          Math.max(node.box[3], child.box[3]),
+        ];
+      });
+      node.end = nodes.length;
+      return node;
+    }
+
+    // Languages share the full circle by lines, largest first from 12 o'clock.
+    const GAP = 0.03;
+    const usable = TAU - GAP * langs.length;
+    const plant = () => {
+    nodes = [];
+    order = 0;
+    let cursor = -Math.PI / 2;
+    for (const g of langs) {
+      const share = churnOf(g) / total;
+      const span = Math.max(share * usable, 0.06);
+      const mid = cursor + GAP / 2 + span / 2;
+      grow(
+        g,
+        -1,
+        0,
+        [],
+        Math.cos(mid) * INNER,
+        Math.sin(mid) * INNER,
+        mid,
+        LANG_LEN * (0.7 + 0.3 * Math.sqrt(share)),
+        3 + 15 * Math.sqrt(share),
+        Math.min(1.7, Math.max(0.6, span * 1.6)),
+      );
+      cursor += span + GAP;
+    }
+    };
+    plant();
+    const extent = nodes.reduce((m, n) => Math.max(m, Math.abs(n.box[0]), Math.abs(n.box[1]), Math.abs(n.box[2]), Math.abs(n.box[3])), 1);
+    fit = Math.min(1, 470 / extent);
+    plant();
+
+    // Poster labels: the biggest repositories.
+    const labels: Label[] = nodes
+      .filter((n) => n.kind === "repo")
+      .sort((p, q) => churnOf(q) - churnOf(p))
+      .slice(0, 6)
+      .map((n) => {
+        const dist = Math.hypot(n.x, n.y) || 1;
+        return {
+          x: n.x + (n.x / dist) * 12,
+          y: n.y + (n.y / dist) * 12 + 4,
+          text: n.name,
+          anchor: n.x >= 0 ? "start" : "end",
+          delay: 0,
+        };
+      });
 
     const cal = profile?.calendar ?? [];
     const m = Math.max(1, cal.length);
@@ -128,17 +268,18 @@
       };
     });
 
-    return { branches, leaves, halo };
+    return { nodes, labels, halo };
   });
 
   // ---- pan + zoom ----
+  // View state is written at most once per animation frame. Pointer and wheel
+  // events only accumulate into a pending target, so a burst of 120Hz events
+  // costs one SVG repaint, not five.
   let svgEl: SVGSVGElement;
   let scale = $state(1);
   let tx = $state(0);
   let ty = $state(0);
   let dragging = $state(false);
-  let lastX = 0;
-  let lastY = 0;
   // The center ring pulses once per click on the avatar (a quiet little touch),
   // never on a loop. Bumping the counter remounts the circle to replay it.
   let pulses = $state(0);
@@ -147,60 +288,272 @@
   }
   const transformed = $derived(scale !== 1 || tx !== 0 || ty !== 0);
 
+  const MIN_SCALE = 0.6;
+  // Deep enough to read a file-level twig of the largest repo.
+  const MAX_SCALE = 90;
+  const reduceMotion =
+    typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  let frame = 0;
+  let pendingDx = 0;
+  let pendingDy = 0;
+  let vx = 0; // svg units per ms, for the release glide
+  let vy = 0;
+  let lastX = 0;
+  let lastY = 0;
+  let lastT = 0;
+  let downX = 0;
+  let downY = 0;
+  let pointerId: number | null = null;
+  let tween: { s: number; x: number; y: number; t0: number; from: { s: number; x: number; y: number } } | null =
+    null;
+  let glideT = 0;
+  let idle: ReturnType<typeof setTimeout> | undefined;
+
+  // What is drawn depends on the view, but recomputing it every frame would
+  // churn thousands of elements. `cull` is a snapshot of the view that only
+  // moves when the real view has drifted a meaningful amount (or settles).
+  let size = $state({ w: 1000, h: 1000 });
+  let cull = $state({ s: 1, x: 0, y: 0 });
+  // svg units -> screen px at scale 1 (the viewBox is 1000 units, "meet").
+  const ppu = () => Math.min(size.w, size.h) / 1000;
+  function settle() {
+    if (cull.s !== scale || cull.x !== tx || cull.y !== ty) cull = { s: scale, x: tx, y: ty };
+  }
+  function drifted() {
+    const zoomed = Math.abs(Math.log2(scale / cull.s)) > 0.35;
+    const panned = Math.hypot(tx - cull.x, ty - cull.y) * ppu() > Math.min(size.w, size.h) * 0.3;
+    return zoomed || panned;
+  }
+
+  // Draw a node when it is long and thick enough on screen to see, and its
+  // subtree is near the viewport. Nodes are pre-order, so a rejected node
+  // skips its whole subtree (every descendant is shorter).
+  const MIN_PX = 8;
+  const MIN_WIDTH_PX = 0.3;
+  const visible = $derived.by(() => {
+    const nodes = layout.nodes;
+    const k = cull.s * ppu();
+    // Viewport in tree units, padded by half a screen each way so panning
+    // reveals already-drawn branches.
+    const hw = size.w / k;
+    const hh = size.h / k;
+    const cx = -cull.x / cull.s;
+    const cy = -cull.y / cull.s;
+    const out: Node[] = [];
+    let i = 0;
+    while (i < nodes.length) {
+      const n = nodes[i];
+      const [x0, y0, x1, y1] = n.box;
+      const onScreen = x1 > cx - hw && x0 < cx + hw && y1 > cy - hh && y0 < cy + hh;
+      const tooSmall = n.len * k < MIN_PX || n.width * k < MIN_WIDTH_PX;
+      if (!onScreen || (n.depth > 1 && tooSmall)) {
+        i = n.end;
+        continue;
+      }
+      out.push(n);
+      i += 1;
+    }
+    return out;
+  });
+  // Tips: files and other ends of the line, filled when net-positive.
+  const tips = $derived(visible.filter((n) => n.leaf));
+  const fontUnits = $derived(12 / (cull.s * ppu()));
+  // Names appear once a limb is long enough on screen to carry one. Shallow
+  // levels win (languages, then repositories, then folders), and a name that
+  // would overlap one already placed is skipped rather than stacked.
+  const names = $derived.by(() => {
+    const k = cull.s * ppu();
+    const f = fontUnits;
+    const placed: [number, number, number, number][] = [];
+    const out: Node[] = [];
+    const ranked = visible
+      .filter((n) => n.len * k > 60)
+      .sort((p, q) => p.depth - q.depth || churnOf(q) - churnOf(p));
+    for (const n of ranked) {
+      const w = n.name.length * f * 0.6;
+      const right = Math.cos(n.ang) >= 0;
+      const x0 = right ? n.x : n.x - w;
+      const box: [number, number, number, number] = [x0 - f * 0.3, n.y - f * 0.8, x0 + w + f * 0.3, n.y + f * 0.8];
+      if (placed.some((b) => box[0] < b[2] && box[2] > b[0] && box[1] < b[3] && box[3] > b[1])) continue;
+      placed.push(box);
+      out.push(n);
+      if (out.length >= 28) break;
+    }
+    return out;
+  });
+
+  // Hovering a limb lights its whole lineage back to you.
+  let hovered = $state<Node | null>(null);
+  const lineage = $derived.by(() => {
+    const set = new Set<number>();
+    for (let n = hovered; n; n = n.parent >= 0 ? layout.nodes[n.parent] : null) set.add(n.id);
+    return set;
+  });
+
+  // Hover is resolved once at the svg, from whatever is under the pointer.
+  // Per-branch enter/leave is unreliable on thin strokes and never fires for
+  // a branch that culling removes, which left highlights stuck on.
+  function onHover(e: PointerEvent) {
+    if (dragging) return;
+    const id = (e.target as Element).closest?.(".branch")?.getAttribute("data-id");
+    const n = id == null ? null : (layout.nodes[Number(id)] ?? null);
+    if (n !== hovered) hovered = n;
+  }
+
   function clientToSvg(x: number, y: number) {
     const ctm = svgEl?.getScreenCTM();
     if (!ctm) return { x: 0, y: 0 };
     const p = new DOMPoint(x, y).matrixTransform(ctm.inverse());
     return { x: p.x, y: p.y };
   }
-  function zoomAt(factor: number, cx: number, cy: number) {
-    const ns = Math.min(6, Math.max(0.6, scale * factor));
-    const k = ns / scale;
-    tx = cx - k * (cx - tx);
-    ty = cy - k * (cy - ty);
-    scale = ns;
+  function pxToSvg() {
+    return svgEl?.getScreenCTM()?.a || 1;
   }
+  function schedule() {
+    if (!frame) frame = requestAnimationFrame(tick);
+  }
+  function stopMotion() {
+    tween = null;
+    vx = vy = 0;
+  }
+
+  function tick(now: number) {
+    frame = 0;
+    let again = false;
+    if (pendingDx || pendingDy) {
+      tx += pendingDx;
+      ty += pendingDy;
+      pendingDx = pendingDy = 0;
+    }
+    if (tween) {
+      const k = Math.min(1, (now - tween.t0) / 260);
+      const e = 1 - Math.pow(1 - k, 3);
+      scale = tween.from.s + (tween.s - tween.from.s) * e;
+      tx = tween.from.x + (tween.x - tween.from.x) * e;
+      ty = tween.from.y + (tween.y - tween.from.y) * e;
+      if (k < 1) again = true;
+      else tween = null;
+    } else if (!dragging && (vx || vy)) {
+      // Release glide: exponential decay, frame-rate independent.
+      const dt = Math.min(48, now - (glideT || now - 16));
+      glideT = now;
+      tx += vx * dt;
+      ty += vy * dt;
+      const decay = Math.pow(0.994, dt);
+      vx *= decay;
+      vy *= decay;
+      if (Math.hypot(vx, vy) * pxToSvg() < 0.02) vx = vy = 0;
+      else again = true;
+    }
+    // Redraw detail when the view has moved far, and once it comes to rest.
+    if (drifted()) settle();
+    clearTimeout(idle);
+    idle = setTimeout(settle, 140);
+    if (again) schedule();
+  }
+
+  function animateTo(target: { s: number; x: number; y: number }, animate = true) {
+    vx = vy = 0;
+    if (!animate || reduceMotion) {
+      tween = null;
+      scale = target.s;
+      tx = target.x;
+      ty = target.y;
+      schedule();
+      return;
+    }
+    tween = { ...target, t0: performance.now(), from: { s: scale, x: tx, y: ty } };
+    schedule();
+  }
+  // Zoom about a point given in svg coordinates. Animated for discrete steps
+  // (buttons, double-click); immediate for continuous pinch.
+  function zoomAt(factor: number, cx: number, cy: number, animate = true) {
+    const base = tween ? { s: tween.s, x: tween.x, y: tween.y } : { s: scale, x: tx, y: ty };
+    const ns = Math.min(MAX_SCALE, Math.max(MIN_SCALE, base.s * factor));
+    const k = ns / base.s;
+    animateTo({ s: ns, x: cx - k * (cx - base.x), y: cy - k * (cy - base.y) }, animate);
+  }
+  // Frame a node and everything that grows from it.
+  function dive(n: Node) {
+    const [x0, y0, x1, y1] = n.box;
+    const fit = 0.86 * Math.min(size.w / ppu() / (x1 - x0), size.h / ppu() / (y1 - y0));
+    const ns = Math.min(MAX_SCALE, Math.max(MIN_SCALE, fit));
+    animateTo({ s: ns, x: -((x0 + x1) / 2) * ns, y: -((y0 + y1) / 2) * ns });
+  }
+  function reset() {
+    animateTo({ s: 1, x: 0, y: 0 });
+  }
+
   function onWheel(e: WheelEvent) {
     // Only intercept pinch (ctrl+wheel on macOS trackpads); a plain two-finger
     // swipe stays free to page between dashboard and tree.
     if (!e.ctrlKey) return;
     e.preventDefault();
     const c = clientToSvg(e.clientX, e.clientY);
-    zoomAt(Math.exp(-e.deltaY * 0.01), c.x, c.y);
+    zoomAt(Math.exp(-e.deltaY * 0.01), c.x, c.y, false);
+  }
+  function onDblClick(e: MouseEvent) {
+    const c = clientToSvg(e.clientX, e.clientY);
+    zoomAt(e.shiftKey ? 1 / 2 : 2, c.x, c.y);
   }
   function onPointerDown(e: PointerEvent) {
-    if (e.button !== 0) return;
-    dragging = true;
-    lastX = e.clientX;
-    lastY = e.clientY;
-    svgEl.setPointerCapture(e.pointerId);
+    if (e.button !== 0 || pointerId !== null) return;
+    // Without this WebKit starts a text selection across the labels mid-drag.
+    e.preventDefault();
+    stopMotion();
+    pointerId = e.pointerId;
+    lastX = downX = e.clientX;
+    lastY = downY = e.clientY;
+    lastT = e.timeStamp;
   }
   function onPointerMove(e: PointerEvent) {
-    if (!dragging) return;
-    const ctm = svgEl.getScreenCTM();
-    if (!ctm) return;
-    tx += (e.clientX - lastX) / ctm.a;
-    ty += (e.clientY - lastY) / ctm.d;
+    if (e.pointerId !== pointerId) return;
+    // A few pixels of slop so a click on the avatar stays a click.
+    if (!dragging) {
+      if (Math.hypot(e.clientX - downX, e.clientY - downY) < 4) return;
+      dragging = true;
+      hovered = null;
+      svgEl.setPointerCapture(e.pointerId);
+    }
+    const u = 1 / pxToSvg();
+    const dx = (e.clientX - lastX) * u;
+    const dy = (e.clientY - lastY) * u;
+    const dt = Math.max(1, e.timeStamp - lastT);
+    // Smoothed velocity, so the glide follows the flick rather than the last jitter.
+    vx = vx * 0.6 + (dx / dt) * 0.4;
+    vy = vy * 0.6 + (dy / dt) * 0.4;
+    pendingDx += dx;
+    pendingDy += dy;
     lastX = e.clientX;
     lastY = e.clientY;
+    lastT = e.timeStamp;
+    schedule();
   }
   function onPointerUp(e: PointerEvent) {
+    if (e.pointerId !== pointerId) return;
+    pointerId = null;
+    if (!dragging) return;
     dragging = false;
-    try {
-      svgEl.releasePointerCapture(e.pointerId);
-    } catch {
-      /* pointer already released */
-    }
-  }
-  function reset() {
-    scale = 1;
-    tx = 0;
-    ty = 0;
+    if (svgEl.hasPointerCapture(e.pointerId)) svgEl.releasePointerCapture(e.pointerId);
+    // Holding still before letting go means "put it here", not "throw it".
+    if (e.timeStamp - lastT > 60 || reduceMotion || e.type === "pointercancel") vx = vy = 0;
+    glideT = 0;
+    schedule();
   }
 
   onMount(() => {
     svgEl.addEventListener("wheel", onWheel, { passive: false });
-    return () => svgEl.removeEventListener("wheel", onWheel);
+    const ro = new ResizeObserver(([e]) => {
+      size = { w: e.contentRect.width || 1000, h: e.contentRect.height || 1000 };
+    });
+    ro.observe(svgEl);
+    return () => {
+      svgEl.removeEventListener("wheel", onWheel);
+      ro.disconnect();
+      cancelAnimationFrame(frame);
+      clearTimeout(idle);
+    };
   });
 
   // ---- screenshot export: a self-contained, high-res poster PNG ----
@@ -224,14 +577,29 @@
     const s = 0.84;
     const L = layout;
 
-    const branches = L.branches
+    // The poster is a still, so it draws every limb that would be at least
+    // half a pixel long at its size.
+    const drawn = L.nodes.filter((n) => n.len * s >= 1.5);
+    const branches = drawn
       .map(
-        (b) =>
-          `<path d="${b.d}" fill="none" stroke="${b.color}" stroke-width="${r1(b.width)}" stroke-linecap="round" opacity="0.92"/>`,
+        (n) =>
+          `<path d="${n.d}" fill="none" stroke="${n.color}" stroke-width="${Math.max(0.35, r1(n.width))}" stroke-linecap="round" opacity="0.92"/>`,
       )
       .join("");
-    const leaves = L.leaves
-      .map((lf) => `<circle cx="${r1(lf.x)}" cy="${r1(lf.y)}" r="${r1(lf.r)}" fill="${lf.color}"/>`)
+    const tips = drawn
+      .filter((n) => n.leaf)
+      .map((n) => {
+        const r = r1(Math.max(n.width * 0.9, 1.2));
+        return n.added >= n.removed
+          ? `<circle cx="${r1(n.x)}" cy="${r1(n.y)}" r="${r}" fill="${n.color}"/>`
+          : `<circle cx="${r1(n.x)}" cy="${r1(n.y)}" r="${r}" fill="${BG}" stroke="${n.color}" stroke-width="${r1(r * 0.4)}"/>`;
+      })
+      .join("");
+    const labels = L.labels
+      .map(
+        (l) =>
+          `<text x="${r1(l.x)}" y="${r1(l.y)}" text-anchor="${l.anchor}" font-size="15" font-weight="600" fill="${TEXT}">${esc(l.text)}</text>`,
+      )
       .join("");
     const halo = L.halo
       .map((h) => `<circle cx="${r1(h.x)}" cy="${r1(h.y)}" r="${r1(h.size)}" fill="${h.color}"/>`)
@@ -261,8 +629,9 @@
   <rect width="${W}" height="${H}" fill="url(#vig)"/>
   <g transform="translate(${cx} ${cy}) scale(${s})">
     ${branches}
-    ${leaves}
+    ${tips}
     ${halo}
+    ${labels}
     <circle cx="0" cy="0" r="${AVATAR_R + 3}" fill="none" stroke="rgba(255,255,255,0.16)" stroke-width="2"/>
     ${avatar}
   </g>
@@ -313,7 +682,7 @@
   }
 </script>
 
-<div class="tree" class:dragging>
+<div class="tree" class:dragging class:hovering={hovered !== null}>
   <svg
     bind:this={svgEl}
     viewBox="-500 -500 1000 1000"
@@ -324,32 +693,63 @@
     onpointermove={onPointerMove}
     onpointerup={onPointerUp}
     onpointercancel={onPointerUp}
+    onpointerover={onHover}
+    onpointerleave={() => (hovered = null)}
+    ondblclick={onDblClick}
   >
     <g transform="translate({tx} {ty}) scale({scale})">
       <g class="branches">
-        {#each layout.branches as b (b.repo)}
+        {#each visible as n (n.id)}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
           <path
             class="branch"
-            d={b.d}
-            stroke={b.color}
-            stroke-width={b.width}
+            class:lit={lineage.has(n.id)}
+            d={n.d}
+            stroke={n.color}
+            stroke-width={Math.max(n.width, 0.8 / (cull.s * ppu()))}
             pathLength="100"
-            style="--delay:{b.delay}ms"
-          >
-            <title>{b.repo} · {b.lang ?? "—"} · {signed(b.net)} · {b.commits} commits</title>
-          </path>
+            style="--delay:{n.delay}ms"
+            data-id={n.id}
+            onclick={() => dive(n)}
+          />
         {/each}
       </g>
 
-      <g class="leaves">
-        {#each layout.leaves as lf, i (i)}
-          <circle class="leaf" cx={lf.x} cy={lf.y} r={lf.r} fill={lf.color} style="--delay:{lf.delay}ms" />
+      <g class="tips">
+        {#each tips as n (n.id)}
+          {@const r = Math.max(n.width * 0.9, 1.6 / (cull.s * ppu()))}
+          <circle
+            class="tip"
+            class:lit={lineage.has(n.id)}
+            cx={n.x}
+            cy={n.y}
+            {r}
+            fill={n.added >= n.removed ? n.color : "var(--bg)"}
+            stroke={n.color}
+            stroke-width={n.added >= n.removed ? 0 : r * 0.4}
+            style="--delay:{n.delay + 600}ms"
+          />
         {/each}
       </g>
 
       <g class="halo">
         {#each layout.halo as h, i (i)}
           <circle class="hdot" cx={h.x} cy={h.y} r={h.size} fill={h.color} style="--delay:{h.delay}ms" />
+        {/each}
+      </g>
+
+      <g class="labels" style="font-size:{fontUnits}px; stroke-width:{fontUnits * 0.3}px">
+        {#each names as n (n.id)}
+          {@const right = Math.cos(n.ang) >= 0}
+          <text
+            class="rlabel"
+            class:lit={lineage.has(n.id)}
+            x={n.x + Math.cos(n.ang) * fontUnits * 0.8}
+            y={n.y + Math.sin(n.ang) * fontUnits * 0.8 + fontUnits * 0.35}
+            text-anchor={right ? "start" : "end"}
+            style="--delay:{n.delay + 700}ms">{n.name}</text
+          >
         {/each}
       </g>
 
@@ -376,7 +776,7 @@
       <!-- Decorative: clicking the avatar just plays a one-off pulse, no action. -->
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <circle cx="0" cy="0" r={AVATAR_R} fill="transparent" onclick={firePulse} />
+      <circle cx="0" cy="0" r={AVATAR_R} fill="transparent" onclick={() => (firePulse(), reset())} />
     </g>
   </svg>
 
@@ -398,7 +798,7 @@
           .summary.languageCount} languages
       </span>
     </div>
-    <div class="hint">each branch is a repository, sized by lines written, colored by its language</div>
+    <div class="hint"></div>
   </div>
 
   <div class="wordmark">MASTER<span class="add"> +</span><span class="remove">−</span> DIFF</div>
@@ -414,7 +814,22 @@
     </div>
   </div>
 
-  <div class="usehint">pinch to zoom · drag to pan</div>
+  {#if hovered}
+    <div class="readout">
+      <div class="trail">
+        {#each hovered.trail as part, i (i)}{#if i > 0}<span class="sep">/</span>{/if}<span
+            class:leafname={i === hovered.trail.length - 1}>{part}</span
+          >{/each}
+      </div>
+      <div class="mono nums">
+        <span class="add">+{commas(hovered.added)}</span>
+        <span class="remove">−{commas(hovered.removed)}</span>
+        <span class="muted">· {Math.round((churnOf(hovered) / Math.max(1, snapshot.summary.added + snapshot.summary.removed)) * 1000) / 10}% of everything you've written</span>
+      </div>
+    </div>
+  {:else}
+    <div class="usehint">Explore</div>
+  {/if}
 
   {#if toast}
     <div class="snackbar">{toast}</div>
@@ -434,6 +849,17 @@
   .tree.dragging {
     cursor: grabbing;
   }
+  /* Nothing in the tree is text to select; dragging must never start a selection. */
+  .tree,
+  .tree * {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-user-drag: none;
+  }
+  /* Mid-drag, branches must not run hover filters as the cursor sweeps over them. */
+  .tree.dragging svg * {
+    pointer-events: none;
+  }
   svg {
     position: absolute;
     inset: 0;
@@ -450,18 +876,51 @@
     stroke-dashoffset: 100;
     animation: grow 0.85s cubic-bezier(0.33, 0, 0.2, 1) forwards;
     animation-delay: var(--delay);
-    transition: filter 0.15s, opacity 0.15s;
+    transition: opacity 0.25s ease;
   }
-  .branch:hover {
+  .branch {
+    cursor: pointer;
+  }
+  /* Hovering lights one lineage, you -> language -> repo -> ... -> this, and
+     sinks everything else. Opacity only: cheap to repaint. */
+  .tree.hovering .branch {
+    opacity: 0.22;
+  }
+  .tree.hovering .branch.lit {
     opacity: 1;
-    filter: brightness(1.45);
+  }
+  /* Tips and names fade in with a filled-forward animation that owns their
+     opacity, so they dim through fill/stroke opacity instead. */
+  .tip,
+  .rlabel {
+    transition: fill-opacity 0.25s ease, stroke-opacity 0.25s ease;
+  }
+  .tree.hovering .tip:not(.lit) {
+    fill-opacity: 0.22;
+    stroke-opacity: 0.22;
+  }
+  .tree.hovering .rlabel:not(.lit) {
+    fill-opacity: 0.35;
   }
   @keyframes grow {
     to {
       stroke-dashoffset: 0;
     }
   }
-  .leaf {
+  /* Size and halo width come from the group, in tree units, so names stay a
+     constant size on screen at any zoom. */
+  .rlabel {
+    fill: var(--text);
+    font-weight: 600;
+    paint-order: stroke;
+    stroke: var(--bg);
+    stroke-linejoin: round;
+    opacity: 0;
+    animation: fade 0.5s ease forwards;
+    animation-delay: var(--delay);
+    pointer-events: none;
+  }
+  .tip {
     opacity: 0;
     transform-box: fill-box;
     transform-origin: center;
@@ -596,7 +1055,7 @@
     align-items: center;
     gap: 10px;
     opacity: 0.35;
-    transition: opacity 0.18s;
+    transition: opacity 0.25s ease;
   }
   .tree:hover .controls {
     opacity: 1;
@@ -642,6 +1101,34 @@
     opacity: 0.5;
   }
 
+  .readout {
+    position: absolute;
+    bottom: 16px;
+    left: 26px;
+    right: 220px;
+    pointer-events: none;
+    text-shadow: 0 1px 12px var(--bg);
+  }
+  .readout .trail {
+    font-size: 14px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .readout .sep {
+    margin: 0 5px;
+    color: var(--text-faint);
+  }
+  .readout .leafname {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .readout .nums {
+    margin-top: 3px;
+    font-size: 12px;
+  }
+
   .snackbar {
     position: absolute;
     bottom: 46px;
@@ -664,6 +1151,15 @@
     to {
       opacity: 1;
       transform: translate(-50%, 0);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .branch,
+    .tip,
+    .hdot,
+    .rlabel {
+      animation-duration: 1ms;
+      animation-delay: 0ms;
     }
   }
 </style>
