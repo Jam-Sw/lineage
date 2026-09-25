@@ -1,8 +1,9 @@
 # Lineage
 
 Your lifetime of GitHub contributions on one page, live in the menu bar or system tray.
+<img width="1496" height="826" alt="image" src="https://github.com/user-attachments/assets/cc6c40c7-8026-4fd4-a0d4-9c7f7f34377a" />
+<img width="1496" height="826" alt="image" src="https://github.com/user-attachments/assets/57eb595c-64ac-4591-95dd-e6de44b05ff5" />
 
-<img width="944" height="638" alt="image" src="https://github.com/user-attachments/assets/a63b597a-4f26-4888-b334-58f2295befd8" />
 
 
 Lineage computes every line you have ever added and removed across your entire
