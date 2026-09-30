@@ -34,6 +34,11 @@ async function call<T>(cmd: string, args?: Record<string, unknown>): Promise<T> 
 // data
 export const authStatus = () => call<AuthStatus>("auth_status");
 export const getSnapshot = () => call<Snapshot | null>("get_snapshot");
+// The snapshot as last seen on the impact tree; fresher snapshots diff against
+// it to find what grew (the energy wave on the graph view).
+export const getTreeBaseline = () => call<Snapshot | null>("get_tree_baseline");
+export const setTreeBaseline = (snapshot: Snapshot) =>
+  call<void>("set_tree_baseline", { snapshot });
 export const getSyncStatus = () => call<SyncStatus>("get_sync_status");
 export const getProfile = () => call<ProfileStats | null>("get_profile");
 export const refreshProfile = () => call<void>("refresh_profile");

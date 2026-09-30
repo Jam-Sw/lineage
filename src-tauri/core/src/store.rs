@@ -9,6 +9,8 @@ use crate::types::{
     SyncStatus,
 };
 use rusqlite::Connection;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -149,61 +151,53 @@ impl Store {
         Ok(())
     }
 
-    // ---- cached snapshot ----
+    // ---- kv JSON cache helpers (snapshot, profile, tree baseline) ----
 
-    pub fn get_snapshot(&self) -> Result<Option<Snapshot>> {
+    fn get_json<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
         let raw: Option<String> = self
             .conn
-            .query_row("SELECT value FROM kv_cache WHERE key = 'snapshot'", [], |r| r.get(0))
+            .query_row("SELECT value FROM kv_cache WHERE key = ?1", [key], |r| r.get(0))
             .ok();
         match raw {
             Some(s) => Ok(Some(
                 serde_json::from_str(&s)
-                    .map_err(|e| AppError::Storage(format!("snapshot parse: {e}")))?,
+                    .map_err(|e| AppError::Storage(format!("{key} parse: {e}")))?,
             )),
             None => Ok(None),
         }
     }
 
-    pub fn set_snapshot(&self, snapshot: &Snapshot) -> Result<()> {
-        let value = serde_json::to_string(snapshot)
+    fn set_json<T: Serialize>(&self, key: &str, value: &T) -> Result<()> {
+        let value = serde_json::to_string(value)
             .map_err(|e| AppError::Storage(e.to_string()))?;
         self.conn
             .execute(
-                "INSERT INTO kv_cache (key, value, updated_at) VALUES ('snapshot', ?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
-                (&value, Self::now()),
+                "INSERT INTO kv_cache (key, value, updated_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key) DO UPDATE SET value = ?2, updated_at = ?3",
+                (key, &value, Self::now()),
             )
             .map_err(|e| AppError::Storage(e.to_string()))?;
         Ok(())
+    }
+
+    // ---- cached snapshot ----
+
+    pub fn get_snapshot(&self) -> Result<Option<Snapshot>> {
+        self.get_json("snapshot")
+    }
+
+    pub fn set_snapshot(&self, snapshot: &Snapshot) -> Result<()> {
+        self.set_json("snapshot", snapshot)
     }
 
     // ---- cached profile (contributions graph for the impact tree) ----
 
     pub fn get_profile(&self) -> Result<Option<ProfileStats>> {
-        let raw: Option<String> = self
-            .conn
-            .query_row("SELECT value FROM kv_cache WHERE key = 'profile'", [], |r| r.get(0))
-            .ok();
-        match raw {
-            Some(s) => Ok(Some(
-                serde_json::from_str(&s)
-                    .map_err(|e| AppError::Storage(format!("profile parse: {e}")))?,
-            )),
-            None => Ok(None),
-        }
+        self.get_json("profile")
     }
 
     pub fn set_profile(&self, profile: &ProfileStats) -> Result<()> {
-        let value = serde_json::to_string(profile).map_err(|e| AppError::Storage(e.to_string()))?;
-        self.conn
-            .execute(
-                "INSERT INTO kv_cache (key, value, updated_at) VALUES ('profile', ?1, ?2)
-                 ON CONFLICT(key) DO UPDATE SET value = ?1, updated_at = ?2",
-                (&value, Self::now()),
-            )
-            .map_err(|e| AppError::Storage(e.to_string()))?;
-        Ok(())
+        self.set_json("profile", profile)
     }
 
     pub fn clear_profile(&self) -> Result<()> {
@@ -211,6 +205,16 @@ impl Store {
             .execute("DELETE FROM kv_cache WHERE key = 'profile'", [])
             .map_err(|e| AppError::Storage(e.to_string()))?;
         Ok(())
+    }
+
+    // ---- tree baseline (the snapshot as last seen on the impact tree) ----
+
+    pub fn get_tree_baseline(&self) -> Result<Option<Snapshot>> {
+        self.get_json("tree_baseline")
+    }
+
+    pub fn set_tree_baseline(&self, snapshot: &Snapshot) -> Result<()> {
+        self.set_json("tree_baseline", snapshot)
     }
 
     // ---- sync state ----
@@ -396,6 +400,7 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::Summary;
 
     #[test]
     fn migrates_and_defaults() {
@@ -418,6 +423,30 @@ mod tests {
         let got = s.get_settings().unwrap();
         assert!(got.include_forks);
         assert_eq!(got.extra_emails, vec!["a@b.com".to_string()]);
+    }
+
+    #[test]
+    fn tree_baseline_round_trip() {
+        let s = Store::open_in_memory().unwrap();
+        assert!(s.get_tree_baseline().unwrap().is_none());
+        let snap = Snapshot {
+            summary: Summary {
+                added: 12,
+                removed: 3,
+                net: 9,
+                commits: 2,
+                repo_count: 1,
+                language_count: 1,
+            },
+            languages: Vec::new(),
+            repos: Vec::new(),
+            filtered: true,
+            last_synced_at: None,
+        };
+        s.set_tree_baseline(&snap).unwrap();
+        let got = s.get_tree_baseline().unwrap().expect("baseline stored");
+        assert_eq!(got.summary.added, 12);
+        assert!(got.filtered);
     }
 
     #[test]

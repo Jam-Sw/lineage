@@ -14,11 +14,13 @@ import {
   ApiError,
   authStatus,
   connectViaPat,
+  getTreeBaseline,
   resolveClose,
   saveTreeImage,
   setSettings,
+  setTreeBaseline,
 } from "./client";
-import type { AppSettings } from "./types";
+import type { AppSettings, Snapshot } from "./types";
 
 beforeEach(() => {
   invoke.mockReset();
@@ -42,6 +44,19 @@ describe("api client wrappers", () => {
     invoke.mockResolvedValue(settings);
     await setSettings(settings);
     expect(invoke).toHaveBeenCalledWith("set_settings", { settings });
+  });
+
+  it("getTreeBaseline calls get_tree_baseline with no args", async () => {
+    invoke.mockResolvedValue(null);
+    await getTreeBaseline();
+    expect(invoke).toHaveBeenCalledWith("get_tree_baseline", undefined);
+  });
+
+  it("setTreeBaseline passes the seen snapshot", async () => {
+    const snapshot = { repos: [] } as unknown as Snapshot;
+    invoke.mockResolvedValue(undefined);
+    await setTreeBaseline(snapshot);
+    expect(invoke).toHaveBeenCalledWith("set_tree_baseline", { snapshot });
   });
 
   it("resolveClose passes the chosen behavior", async () => {

@@ -166,6 +166,19 @@ fn get_snapshot(state: State<'_, AppState>) -> CmdResult<Option<Snapshot>> {
     Ok(store_lock(&state)?.get_snapshot()?)
 }
 
+/// The snapshot as the user last saw it on the impact tree. Fresh snapshots
+/// diff against it to find what grew; the frontend only writes it back when
+/// the growth wave actually plays on screen.
+#[tauri::command]
+fn get_tree_baseline(state: State<'_, AppState>) -> CmdResult<Option<Snapshot>> {
+    Ok(store_lock(&state)?.get_tree_baseline()?)
+}
+
+#[tauri::command]
+fn set_tree_baseline(state: State<'_, AppState>, snapshot: Snapshot) -> CmdResult<()> {
+    Ok(store_lock(&state)?.set_tree_baseline(&snapshot)?)
+}
+
 #[tauri::command]
 fn get_sync_status(state: State<'_, AppState>) -> CmdResult<SyncStatus> {
     Ok(store_lock(&state)?.sync_status()?)
@@ -1148,6 +1161,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             auth_status,
             get_snapshot,
+            get_tree_baseline,
+            set_tree_baseline,
             get_sync_status,
             get_profile,
             refresh_profile,
