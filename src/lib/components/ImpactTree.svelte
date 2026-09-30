@@ -680,26 +680,7 @@
     if (exporting) return;
     exporting = true;
     try {
-      const svg = buildPoster();
-      const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const img = new Image();
-      await new Promise<void>((resolve, reject) => {
-        img.onload = () => resolve();
-        img.onerror = () => reject(new Error("render failed"));
-        img.src = url;
-      });
-      const px = 2;
-      const canvas = document.createElement("canvas");
-      canvas.width = 1600 * px;
-      canvas.height = 1000 * px;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) throw new Error("no canvas context");
-      ctx.scale(px, px);
-      ctx.drawImage(img, 0, 0, 1600, 1000);
-      URL.revokeObjectURL(url);
-      const b64 = canvas.toDataURL("image/png").split(",")[1];
-      const path = await api.saveTreeImage(b64, profile?.login ?? "me");
+      const path = await api.saveTreeImage(buildPoster(), profile?.login ?? "me");
       flash(`Saved to ${path.replace(/^.*\//, "")} on your Desktop`);
     } catch (e) {
       flash(e instanceof Error ? e.message : "Could not save image");
@@ -726,8 +707,7 @@
   >
     <g transform="translate({tx} {ty}) scale({scale})">
       {#if grownTrails.size > 0}
-        <!-- A soft aura under the limbs that grew, kept for the session: it
-             breathes gently, and zooming in brings deeper grown twigs in. -->
+        <!-- soft aura -->
         <g class="glowwrap">
           <g class="glow" class:still={reduceMotion}>
             {#each grownVisible as n (n.id)}

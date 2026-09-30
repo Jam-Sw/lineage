@@ -41,7 +41,10 @@ struct CmdError {
 
 impl From<AppError> for CmdError {
     fn from(e: AppError) -> Self {
-        CmdError { code: e.code().to_string(), message: e.to_string() }
+        CmdError {
+            code: e.code().to_string(),
+            message: e.to_string(),
+        }
     }
 }
 
@@ -80,7 +83,10 @@ struct SyncPhasePayload {
 fn emit_phase(app: &AppHandle, phase: &str, message: &str) {
     let _ = app.emit(
         "sync:phase",
-        SyncPhasePayload { phase: phase.into(), message: message.into() },
+        SyncPhasePayload {
+            phase: phase.into(),
+            message: message.into(),
+        },
     );
 }
 
@@ -294,8 +300,8 @@ fn connect_via_oauth(app: AppHandle) -> CmdResult<OauthStart> {
         verification_uri: code.verification_uri.clone(),
         expires_in: code.expires_in,
     };
-    std::thread::spawn(move || {
-        match credential::device_flow::poll_blocking(&code, || false) {
+    std::thread::spawn(
+        move || match credential::device_flow::poll_blocking(&code, || false) {
             Ok(token) => match credential::connect(token, CredentialSource::Device) {
                 Ok((user, src)) => {
                     let state = app.state::<AppState>();
@@ -311,8 +317,8 @@ fn connect_via_oauth(app: AppHandle) -> CmdResult<OauthStart> {
             Err(e) => {
                 let _ = app.emit("oauth:error", e.to_string());
             }
-        }
-    });
+        },
+    );
     Ok(start)
 }
 
@@ -382,7 +388,11 @@ fn resolve_close(state: State<'_, AppState>, app: AppHandle, behavior: String) -
     {
         let s = store_lock(&state)?;
         let mut settings = s.get_settings()?;
-        settings.close_behavior = if quit { "quit".into() } else { "menuBar".into() };
+        settings.close_behavior = if quit {
+            "quit".into()
+        } else {
+            "menuBar".into()
+        };
         s.set_settings(&settings)?;
     }
     if quit {
@@ -450,8 +460,7 @@ fn uninstall_app(app: AppHandle) -> CmdResult<()> {
         }
     }
 
-    // 3. Move the .app bundle to the Trash once we have exited. Skip in dev,
-    //    where the binary lives under target/ and not inside a .app.
+    // 3. Move the .app bundle to the Trash.
     if let Ok(exe) = std::env::current_exe() {
         if let Some(bundle) = exe.ancestors().nth(3) {
             if bundle.extension().and_then(|e| e.to_str()) == Some("app") {
@@ -479,31 +488,58 @@ fn uninstall_app(app: AppHandle) -> CmdResult<()> {
     Ok(())
 }
 
-/// Persist an exported impact-tree PNG (base64) to the Desktop and reveal it in
-/// Finder. Returns the saved path so the UI can confirm. Keeps image export
-/// entirely in Rust file IO, no extra Tauri plugins.
+/// the export silently produced nothing.
 #[tauri::command]
-fn save_tree_image(app: AppHandle, data_b64: String, login: String) -> CmdResult<String> {
-    let bytes = base64_decode(&data_b64).ok_or_else(|| CmdError {
+fn save_tree_image(app: AppHandle, svg: String, login: String) -> CmdResult<String> {
+    let bytes = render_poster_png(&svg).ok_or_else(|| CmdError {
         code: "VALIDATION".into(),
-        message: "invalid image data".into(),
+        message: "could not render image".into(),
     })?;
     let dir = app
         .path()
         .desktop_dir()
         .or_else(|_| app.path().home_dir())
-        .map_err(|e| CmdError { code: "STORAGE_ERROR".into(), message: e.to_string() })?;
+        .map_err(|e| CmdError {
+            code: "STORAGE_ERROR".into(),
+            message: e.to_string(),
+        })?;
     let safe: String = login
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
         .collect();
-    let stem = if safe.is_empty() { "lineage".to_string() } else { format!("lineage-{safe}") };
+    let stem = if safe.is_empty() {
+        "lineage".to_string()
+    } else {
+        format!("lineage-{safe}")
+    };
     let path = dir.join(format!("{stem}.png"));
-    std::fs::write(&path, &bytes)
-        .map_err(|e| CmdError { code: "STORAGE_ERROR".into(), message: e.to_string() })?;
+    std::fs::write(&path, &bytes).map_err(|e| CmdError {
+        code: "STORAGE_ERROR".into(),
+        message: e.to_string(),
+    })?;
     let display = path.to_string_lossy().to_string();
     let _ = app.opener().reveal_item_in_dir(&path);
     Ok(display)
+}
+
+fn render_poster_png(svg: &str) -> Option<Vec<u8>> {
+    let opts = resvg::usvg::Options::default();
+    let tree = resvg::usvg::Tree::from_str(svg, &opts).ok()?;
+    let size = tree.size().to_int_size();
+    let scale = 2.0;
+    let width = size.width().checked_mul(scale as u32)?;
+    let height = size.height().checked_mul(scale as u32)?;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)?;
+    let mut transform = resvg::tiny_skia::Transform::default();
+    transform = transform.post_scale(scale, scale);
+    resvg::render(&tree, transform, &mut pixmap.as_mut());
+    pixmap.encode_png().ok()
 }
 
 /// Standard base64 decode (RFC 4648), inverse of the core's encoder. Ignores
@@ -650,17 +686,26 @@ fn run_sync(app: &AppHandle) -> lineage_core::Result<()> {
 
     // Stream a live tally as repos complete (parallel; reuses cache for unchanged repos).
     let running = Mutex::new(RunningAgg::default());
-    let results = engine::sync(&cache_dir, &token, &repos, &emails, &opts, &cached, 8, |rr, done, total| {
-        if let Ok(s) = state.store.lock() {
-            let _ = s.sync_progress(done as u32, &rr.churn.full_name);
-        }
-        let payload = {
-            let mut agg = running.lock().unwrap_or_else(|e| e.into_inner());
-            agg.add(&rr.churn);
-            agg.payload(done, total, rr)
-        };
-        let _ = app.emit("sync:tick", payload);
-    })?;
+    let results = engine::sync(
+        &cache_dir,
+        &token,
+        &repos,
+        &emails,
+        &opts,
+        &cached,
+        8,
+        |rr, done, total| {
+            if let Ok(s) = state.store.lock() {
+                let _ = s.sync_progress(done as u32, &rr.churn.full_name);
+            }
+            let payload = {
+                let mut agg = running.lock().unwrap_or_else(|e| e.into_inner());
+                agg.add(&rr.churn);
+                agg.payload(done, total, rr)
+            };
+            let _ = app.emit("sync:tick", payload);
+        },
+    )?;
 
     emit_phase(app, "saving", "Finishing up\u{2026}");
     // Persist the per-repo cache for fast incremental re-syncs.
@@ -692,7 +737,9 @@ fn run_sync(app: &AppHandle) -> lineage_core::Result<()> {
     Ok(())
 }
 
-fn lock_store<'a>(state: &'a State<'_, AppState>) -> lineage_core::Result<std::sync::MutexGuard<'a, Store>> {
+fn lock_store<'a>(
+    state: &'a State<'_, AppState>,
+) -> lineage_core::Result<std::sync::MutexGuard<'a, Store>> {
     state
         .store
         .lock()
@@ -1092,7 +1139,11 @@ fn animate_tray(app: AppHandle) {
 
 /// Abbreviate a signed net diff for the menu bar: `+388k`, `-1.2M`, `+512`.
 fn abbrev_signed(n: i64) -> String {
-    format!("{}{}", if n >= 0 { "+" } else { "-" }, abbrev_unsigned(n.unsigned_abs()))
+    format!(
+        "{}{}",
+        if n >= 0 { "+" } else { "-" },
+        abbrev_unsigned(n.unsigned_abs())
+    )
 }
 
 fn abbrev_unsigned(a: u64) -> String {
@@ -1112,9 +1163,11 @@ fn tray_title(a: &AppearanceSettings, summary: Option<&Summary>) -> Option<Strin
     }
     match summary {
         None => Some("-".to_string()),
-        Some(s) if a.tray_metric == "addedRemoved" => {
-            Some(format!("+{} \u{2212}{}", abbrev_unsigned(s.added), abbrev_unsigned(s.removed)))
-        }
+        Some(s) if a.tray_metric == "addedRemoved" => Some(format!(
+            "+{} \u{2212}{}",
+            abbrev_unsigned(s.added),
+            abbrev_unsigned(s.removed)
+        )),
         Some(s) => Some(abbrev_signed(s.net)),
     }
 }
@@ -1207,7 +1260,8 @@ pub fn run() {
             });
 
             // Tray - the app's permanent menu-bar presence.
-            let open_dash = MenuItem::with_id(app, "open_dashboard", "Open Dashboard", true, None::<&str>)?;
+            let open_dash =
+                MenuItem::with_id(app, "open_dashboard", "Open Dashboard", true, None::<&str>)?;
             let sync = MenuItem::with_id(app, "sync_now", "Sync Now", true, None::<&str>)?;
             let about = PredefinedMenuItem::about(
                 app,
@@ -1219,7 +1273,8 @@ pub fn run() {
                     ..Default::default()
                 }),
             )?;
-            let repo = MenuItem::with_id(app, "open_repo", "Repository on GitHub", true, None::<&str>)?;
+            let repo =
+                MenuItem::with_id(app, "open_repo", "Repository on GitHub", true, None::<&str>)?;
             let data = MenuItem::with_id(app, "open_data", "Open Data Folder", true, None::<&str>)?;
             let settings = Submenu::with_items(
                 app,
@@ -1347,7 +1402,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{abbrev_signed, base64_decode};
+    use super::{abbrev_signed, base64_decode, render_poster_png};
 
     #[test]
     fn base64_decodes_known_vectors() {
@@ -1359,6 +1414,24 @@ mod tests {
         // tolerant of whitespace/newlines that data URLs sometimes carry
         assert_eq!(base64_decode("Zm9v\nYmFy").unwrap(), b"foobar");
         assert!(base64_decode("@@@@").is_none());
+    }
+
+    #[test]
+    fn renders_poster_svg_to_png() {
+        let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"160\" height=\"100\" viewBox=\"0 0 160 100\"><rect width=\"160\" height=\"100\" fill=\"#0f1115\"/><circle cx=\"40\" cy=\"50\" r=\"12\" fill=\"#3fb950\"/></svg>";
+        let png = render_poster_png(svg).expect("poster renders");
+        assert!(png.starts_with(b"\x89PNG"));
+        // 2x the SVG's own pixel size.
+        assert!(png.len() > 100);
+        assert!(render_poster_png("<not-svg>").is_none());
+
+        let avatar = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+        let with_avatar = format!(
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"80\" height=\"80\"><image href=\"{avatar}\" x=\"0\" y=\"0\" width=\"80\" height=\"80\"/></svg>"
+        );
+        let painted = render_poster_png(&with_avatar).expect("avatar renders");
+        assert!(painted.starts_with(b"\x89PNG"));
+        assert!(painted.len() > png.len() / 4);
     }
 
     #[test]

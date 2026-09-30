@@ -73,7 +73,7 @@ export const cacheInfo = () => call<string>("cache_info");
 export const clearCache = () => call<void>("clear_cache");
 // Cleanly removes all local data, the Keychain token, and the app bundle, then quits.
 export const uninstallApp = () => call<void>("uninstall_app");
-export const saveTreeImage = (dataB64: string, login: string) =>
-  call<string>("save_tree_image", { dataB64, login });
+export const saveTreeImage = (svg: string, login: string) =>
+  call<string>("save_tree_image", { svg, login });
 
 export { listen } from "@tauri-apps/api/event";

@@ -65,11 +65,11 @@ describe("api client wrappers", () => {
     expect(invoke).toHaveBeenCalledWith("resolve_close", { behavior: "menuBar" });
   });
 
-  it("saveTreeImage passes the image and login", async () => {
+  it("saveTreeImage passes the poster and login", async () => {
     invoke.mockResolvedValue("/path/tree.png");
-    await saveTreeImage("AAAA", "octocat");
+    await saveTreeImage("<svg></svg>", "octocat");
     expect(invoke).toHaveBeenCalledWith("save_tree_image", {
-      dataB64: "AAAA",
+      svg: "<svg></svg>",
       login: "octocat",
     });
   });
