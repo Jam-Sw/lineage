@@ -1,50 +1,58 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Lineage app icon">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Lineage app icon">
   <title>Lineage</title>
   <defs>
-    <clipPath id="lineage-squircle">
-      <rect x="16" y="16" width="480" height="480" rx="96"></rect>
+    <clipPath id="squircle">
+      <rect x="32" y="32" width="960" height="960" rx="200"/>
     </clipPath>
-    <linearGradient id="lineage-bg" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#0f1729"></stop>
-      <stop offset="100%" stop-color="#1a2744"></stop>
-    </linearGradient>
-    <radialGradient id="lineage-orb" cx="50%" cy="30%" r="50%">
-      <stop offset="0%" stop-color="#93c5fd"></stop>
-      <stop offset="100%" stop-color="#3b82f6"></stop>
-    </radialGradient>
+    <filter id="grain" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+      <feTurbulence type="fractalNoise" baseFrequency="0.36" numOctaves="2" seed="3" stitchTiles="stitch" result="noise"/>
+      <feColorMatrix in="noise" type="matrix" result="gray" values="0.33 0.33 0.33 0 0  0.33 0.33 0.33 0 0  0.33 0.33 0.33 0 0  0 0 0 1 0"/>
+      <feComponentTransfer in="gray" result="stipple">
+        <feFuncR type="linear" slope="1.45" intercept="-0.22"/>
+        <feFuncG type="linear" slope="1.45" intercept="-0.22"/>
+        <feFuncB type="linear" slope="1.45" intercept="-0.22"/>
+      </feComponentTransfer>
+      <feBlend in="SourceGraphic" in2="stipple" mode="overlay"/>
+    </filter>
+    <clipPath id="n1"><circle cx="296" cy="744" r="22"/></clipPath>
+    <clipPath id="n2"><circle cx="352" cy="680" r="28"/></clipPath>
+    <clipPath id="n3"><circle cx="400" cy="608" r="36"/></clipPath>
+    <clipPath id="n4"><circle cx="444" cy="528" r="46"/></clipPath>
+    <clipPath id="n5"><circle cx="480" cy="440" r="58"/></clipPath>
+    <clipPath id="n6"><circle cx="512" cy="308" r="84"/></clipPath>
   </defs>
 
-  
-  <rect x="16" y="16" width="480" height="480" rx="96" fill="url(#lineage-bg)"></rect>
+  <g clip-path="url(#squircle)" filter="url(#grain)">
+    <rect x="32" y="32" width="960" height="960" fill="#1664D0"/>
+    <polygon points="512,176 884,850 140,850" fill="#081A40"/>
+    <polygon points="512,176 744,850 280,850" fill="#12367A"/>
 
-  <g clip-path="url(#lineage-squircle)">
-    
-    <polygon points="256,108 440,420 72,420" fill="#1e3a5f" opacity="0.6"></polygon>
-    <polygon points="256,108 380,420 132,420" fill="#1e3a5f" opacity="0.3"></polygon>
-    <polygon points="256,108 290,200 222,200" fill="#2563eb" opacity="0.08"></polygon>
+    <path d="M 292 760 C 350 700 400 630 444 548 C 476 488 500 400 506 392" fill="none" stroke="#F3F0E6" stroke-width="6" stroke-linecap="butt" stroke-dasharray="13 16"/>
 
-    
-    <path d="M 140 380 C 170 360 190 320 220 280 C 245 248 256 200 256 160" fill="none" stroke="#3b82f6" stroke-width="3" opacity="0.25" stroke-dasharray="6 8"></path>
-
-    
-    <circle cx="148" cy="372" r="8" fill="#1e40af" opacity="0.5"></circle>
-    <circle cx="148" cy="372" r="5" fill="#3b82f6" opacity="0.7"></circle>
-
-    <circle cx="176" cy="340" r="10" fill="#1e40af" opacity="0.5"></circle>
-    <circle cx="176" cy="340" r="7" fill="#3b82f6" opacity="0.8"></circle>
-
-    <circle cx="200" cy="304" r="13" fill="#1e40af" opacity="0.45"></circle>
-    <circle cx="200" cy="304" r="9" fill="#60a5fa" opacity="0.85"></circle>
-
-    <circle cx="222" cy="264" r="16" fill="#1e40af" opacity="0.4"></circle>
-    <circle cx="222" cy="264" r="11" fill="#60a5fa" opacity="0.9"></circle>
-
-    <circle cx="240" cy="220" r="20" fill="#1e3a8a" opacity="0.4"></circle>
-    <circle cx="240" cy="220" r="14" fill="#93c5fd" opacity="0.9"></circle>
-
-    
-    <circle cx="256" cy="160" r="32" fill="#1e3a8a" opacity="0.3"></circle>
-    <circle cx="256" cy="160" r="24" fill="url(#lineage-orb)"></circle>
-    <circle cx="252" cy="154" r="8" fill="#ffffff" opacity="0.3"></circle>
+    <g clip-path="url(#n1)">
+      <rect x="274" y="722" width="44" height="44" fill="#F3F0E6"/>
+      <polygon points="296,744 318,737 318,766 288,766" fill="#3A74B8"/>
+    </g>
+    <g clip-path="url(#n2)">
+      <rect x="324" y="652" width="56" height="56" fill="#F3F0E6"/>
+      <polygon points="352,680 380,672 380,708 342,708" fill="#3A74B8"/>
+    </g>
+    <g clip-path="url(#n3)">
+      <rect x="364" y="572" width="72" height="72" fill="#F3F0E6"/>
+      <polygon points="400,608 436,597 436,644 387,644" fill="#3A74B8"/>
+    </g>
+    <g clip-path="url(#n4)">
+      <rect x="398" y="482" width="92" height="92" fill="#F3F0E6"/>
+      <polygon points="444,528 490,514 490,574 428,574" fill="#3A74B8"/>
+    </g>
+    <g clip-path="url(#n5)">
+      <rect x="422" y="382" width="116" height="116" fill="#F3F0E6"/>
+      <polygon points="480,440 538,423 538,498 460,498" fill="#3A74B8"/>
+    </g>
+    <g clip-path="url(#n6)">
+      <rect x="428" y="224" width="168" height="168" fill="#F3F0E6"/>
+      <polygon points="390,170 575,188 528,268 400,278" fill="#F5C400"/>
+      <polygon points="548,330 640,290 640,430 455,420" fill="#3A74B8"/>
+    </g>
   </g>
 </svg>
