@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import * as api from "$lib/api/client";
   import type {
     Snapshot,
@@ -18,6 +18,7 @@
   import LanguageBars from "$lib/components/LanguageBars.svelte";
   import Treemap from "$lib/components/Treemap.svelte";
   import ImpactTree from "$lib/components/ImpactTree.svelte";
+  import { findGrownTrails } from "$lib/tree-diff";
 
   type FeedItem = { repo: string; added: number; removed: number; lang: string | null; cached: boolean };
 
@@ -45,6 +46,16 @@
   // Swipe pager (dashboard <-> impact tree).
   let pagerEl = $state<HTMLDivElement | null>(null);
   let page = $state(0);
+
+  // Growth since the tree was last looked at. `treeBaseline` is deliberately
+  // non-reactive: only snapshot / page / visibility changes should re-run the
+  // growth effects, never the baseline's own bookkeeping.
+  let treeBaseline: Snapshot | null = null;
+  let wavePending = $state(false);
+  let grownTrails = $state<Set<string>>(new Set());
+  // Bumped to play the energy wave; the tree replays its animation on change.
+  let surge = $state(0);
+  let docVisible = $state(true);
 
   const phase = $derived(
     !auth.connected
@@ -111,6 +122,34 @@
     api.listen<ProfileStats>("profile:done", (e) => {
       profile = e.payload;
     });
+    const onVisibility = () => (docVisible = document.visibilityState === "visible");
+    document.addEventListener("visibilitychange", onVisibility);
+    onVisibility();
+    return () => document.removeEventListener("visibilitychange", onVisibility);
+  });
+
+  // A fresh snapshot arrives (first load or a finished sync): diff it against
+  // the snapshot last seen on the tree, and remember this session's growth so
+  // the tree can pulse and shimmer on it.
+  $effect(() => {
+    const snap = snapshot;
+    if (!snap) return;
+    const grown = findGrownTrails(treeBaseline, snap);
+    if (grown.size === 0) return;
+    grownTrails = untrack(() => new Set([...grownTrails, ...grown]));
+    wavePending = true;
+  });
+
+  // Unseen growth while the tree is actually on screen: play the wave once and
+  // record the snapshot as seen, so the next launch diffs against what was
+  // just shown. Off screen (dashboard, hidden window) the wave stays pending.
+  $effect(() => {
+    if (!wavePending || page !== 1 || phase !== "dashboard" || !docVisible || !snapshot) return;
+    wavePending = false;
+    surge += 1;
+    treeBaseline = snapshot;
+    // Best-effort: if the write fails the next launch just replays the wave.
+    void api.setTreeBaseline(snapshot);
   });
 
   // First-run tour shows once, on the first real dashboard (a snapshot exists, so
@@ -127,6 +166,9 @@
     auth = await api.authStatus();
     appearance = await api.getAppearance();
     settings = await api.getSettings();
+    // The seen baseline must be in hand before the snapshot lands, so the
+    // growth diff above always has something to compare against.
+    treeBaseline = await api.getTreeBaseline();
     snapshot = await api.getSnapshot();
     profile = await api.getProfile();
     // No cached contributions graph yet (and not mid-sync): fetch it on demand.
@@ -270,7 +312,7 @@
     </div>
 
     <div class="page tree-page">
-      <ImpactTree {snapshot} {profile} />
+      <ImpactTree {snapshot} {profile} {grownTrails} {surge} />
     </div>
   </div>
 

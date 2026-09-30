@@ -3,8 +3,21 @@
   import type { Snapshot, ProfileStats, PathNode } from "$lib/api/types";
   import { commas, signed } from "$lib/format";
   import * as api from "$lib/api/client";
+  import { repoShortName, trailKey } from "$lib/tree-diff";
 
-  let { snapshot, profile }: { snapshot: Snapshot; profile: ProfileStats | null } = $props();
+  let {
+    snapshot,
+    profile,
+    grownTrails = new Set<string>(),
+    surge = 0,
+  }: {
+    snapshot: Snapshot;
+    profile: ProfileStats | null;
+    /** Trails (language/repo/.../file) that grew since the tree was last seen. */
+    grownTrails?: Set<string>;
+    /** Bumped by the page to play the energy wave; the tree only watches it. */
+    surge?: number;
+  } = $props();
 
   const TAU = Math.PI * 2;
   const AVATAR_R = 54;
@@ -19,7 +32,6 @@
   const MONO = "ui-monospace, SFMono-Regular, 'SF Mono', Menlo, monospace";
 
   const r1 = (n: number) => Math.round(n * 10) / 10;
-  const shortName = (full: string) => full.slice(full.indexOf("/") + 1);
 
   const langColor = $derived.by(() => {
     const m = new Map<string, string>();
@@ -64,6 +76,10 @@
     /** Bounds of this node and everything below it. */
     box: [number, number, number, number];
     delay: number;
+    /** True when this limb grew since the tree was last looked at. */
+    grown: boolean;
+    /** When the energy wave reaches this limb, marching out from the centre. */
+    waveDelay: number;
   };
   type Label = { x: number; y: number; text: string; anchor: "start" | "end"; delay: number };
   type Dot = { x: number; y: number; size: number; color: string; delay: number };
@@ -105,7 +121,7 @@
       g.removed += r.removed;
       g.commits += r.commits;
       g.children.push({
-        name: shortName(r.fullName),
+        name: repoShortName(r.fullName),
         kind: "repo",
         added: r.added,
         removed: r.removed,
@@ -167,6 +183,8 @@
         leaf: src.children.length === 0,
         box: [Math.min(sx, x) - pad, Math.min(sy, y) - pad, Math.max(sx, x) + pad, Math.max(sy, y) + pad],
         delay: depth <= 2 ? 150 + depth * 420 + (order++ % 60) * 9 : 0,
+        grown: grownTrails.has(trailKey(here)),
+        waveDelay: depth * 240 + (nodes.length % 7) * 30,
       };
       nodes.push(node);
 
@@ -283,8 +301,13 @@
   // The center ring pulses once per click on the avatar (a quiet little touch),
   // never on a loop. Bumping the counter remounts the circle to replay it.
   let pulses = $state(0);
+  // The growth wave follows the page's `surge` token, and an avatar tap adds a
+  // local bump so the session's growth can be replayed by hand.
+  let replay = $state(0);
+  const wave = $derived(surge + replay);
   function firePulse() {
     pulses += 1;
+    replay += 1;
   }
   const transformed = $derived(scale !== 1 || tx !== 0 || ty !== 0);
 
@@ -358,6 +381,10 @@
   });
   // Tips: files and other ends of the line, filled when net-positive.
   const tips = $derived(visible.filter((n) => n.leaf));
+  // The limbs that grew since the tree was last seen: the wave rides these and
+  // the glow keeps them softly lit for the session.
+  const grownVisible = $derived(visible.filter((n) => n.grown));
+  const grownTips = $derived(grownVisible.filter((n) => n.leaf));
   const fontUnits = $derived(12 / (cull.s * ppu()));
   // Names appear once a limb is long enough on screen to carry one. Shallow
   // levels win (languages, then repositories, then folders), and a name that
@@ -698,6 +725,27 @@
     ondblclick={onDblClick}
   >
     <g transform="translate({tx} {ty}) scale({scale})">
+      {#if grownTrails.size > 0}
+        <!-- A soft aura under the limbs that grew, kept for the session: it
+             breathes gently, and zooming in brings deeper grown twigs in. -->
+        <g class="glowwrap">
+          <g class="glow" class:still={reduceMotion}>
+            {#each grownVisible as n (n.id)}
+              <path
+                class="glowpath"
+                d={n.d}
+                stroke={n.color}
+                stroke-width={Math.max(n.width * 2.2, 2.2 / (cull.s * ppu()))}
+              />
+            {/each}
+            {#each grownTips as n (n.id)}
+              {@const r = Math.max(n.width * 1.4, 2.4 / (cull.s * ppu()))}
+              <circle class="glowtip" cx={n.x} cy={n.y} {r} fill={n.color} />
+            {/each}
+          </g>
+        </g>
+      {/if}
+
       <g class="branches">
         {#each visible as n (n.id)}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -732,6 +780,34 @@
           />
         {/each}
       </g>
+
+      {#if wave > 0 && !reduceMotion}
+        <!-- The energy wave: a comet rides out from the centre along every
+             grown limb, in depth order, and bursts where the new lines landed.
+             Keyed by the counter so a new token replays it from scratch. -->
+        {#key wave}
+          <g class="wave">
+            {#each grownVisible as n (n.id)}
+              <path
+                class="comet halo"
+                d={n.d}
+                pathLength="100"
+                style="--wd:{n.waveDelay}ms; stroke-width:{r1(Math.max(4.4 / (cull.s * ppu()), 2))}"
+              />
+              <path
+                class="comet core"
+                d={n.d}
+                pathLength="100"
+                style="--wd:{n.waveDelay}ms; stroke-width:{r1(Math.max(1.5 / (cull.s * ppu()), 0.8))}"
+              />
+            {/each}
+            {#each grownTips as n (n.id)}
+              {@const r = Math.max(n.width * 0.9, 1.6 / (cull.s * ppu()))}
+              <circle class="burst" cx={n.x} cy={n.y} {r} style="--wd:{n.waveDelay + 420}ms" />
+            {/each}
+          </g>
+        {/key}
+      {/if}
 
       <g class="halo">
         {#each layout.halo as h, i (i)}
@@ -945,6 +1021,89 @@
   @keyframes fade {
     to {
       opacity: 0.92;
+    }
+  }
+  /* The growth aura: a soft underlay where the limbs grew, so they stay easy
+     to spot while panning and zooming. It breathes; hover dims it so the
+     lineage highlight stays in charge. */
+  .glowwrap {
+    transition: opacity 0.25s ease;
+    /* The aura must never intercept the pointer: clicks still dive the limb
+       underneath and hover still resolves to the branch. */
+    pointer-events: none;
+  }
+  .tree.hovering .glowwrap {
+    opacity: 0.3;
+  }
+  .glow {
+    animation: breathe 3.6s ease-in-out infinite;
+  }
+  .glow.still {
+    animation: none;
+    opacity: 0.22;
+  }
+  @keyframes breathe {
+    0%,
+    100% {
+      opacity: 0.16;
+    }
+    50% {
+      opacity: 0.42;
+    }
+  }
+  .glowpath {
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .glowtip {
+    opacity: 0.7;
+  }
+  /* The energy wave: a white comet sweeping each grown limb tip-ward, then a
+     burst where the new lines landed. The dash is a 22-unit streak slid along
+     the path (pathLength=100), delayed per limb so the wave marches out from
+     the centre. */
+  .wave {
+    pointer-events: none;
+  }
+  .comet {
+    fill: none;
+    stroke: #fff;
+    stroke-linecap: round;
+    stroke-dasharray: 22 100;
+    stroke-dashoffset: 22;
+    animation: travel 0.55s cubic-bezier(0.3, 0, 0.7, 1) var(--wd, 0ms) forwards;
+  }
+  .comet.halo {
+    opacity: 0.3;
+  }
+  .comet.core {
+    opacity: 0.95;
+  }
+  @keyframes travel {
+    to {
+      stroke-dashoffset: -100;
+    }
+  }
+  .burst {
+    fill: none;
+    stroke: #fff;
+    transform-box: fill-box;
+    transform-origin: center;
+    opacity: 0;
+    animation: burst 0.6s ease-out var(--wd, 0ms) forwards;
+  }
+  @keyframes burst {
+    0% {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+    35% {
+      opacity: 0.9;
+    }
+    100% {
+      opacity: 0;
+      transform: scale(2.6);
     }
   }
   .ring {

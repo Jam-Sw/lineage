@@ -6,6 +6,13 @@ All notable changes to Lineage are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+- The graph view now shows your growth: when a sync adds lines, opening the tree plays
+  an energy wave out from your avatar along every limb that grew, and those limbs keep
+  a soft ambient glow for the session. Tap your avatar to replay the wave.
+- Lineage remembers the tree as you last saw it, so growth collects quietly across
+  launches and waves in the first time you look at it.
+
 ## [0.3.0] - 2026-09-25
 
 ### Added
