@@ -6,6 +6,8 @@ All notable changes to Lineage are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-09-29
+
 ### Added
 - The graph view now shows your growth: when a sync adds lines, opening the tree plays
   an energy wave out from your avatar along every limb that grew, and those limbs keep
@@ -59,7 +61,8 @@ All notable changes to Lineage are recorded here. The format follows
 - One-click GitHub sign-in via OAuth device flow.
 - In-app updater via GitHub Releases.
 
-[Unreleased]: https://github.com/Jam-Sw/lineage/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Jam-Sw/lineage/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Jam-Sw/lineage/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Jam-Sw/lineage/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Jam-Sw/lineage/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Jam-Sw/lineage/releases/tag/v0.1.0
