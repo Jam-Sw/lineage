@@ -187,3 +187,7 @@ A Jam-Sw project, developed privately.
 
 macOS (Apple Silicon), Windows (x64), and Linux (x64). The data engine is proven
 and tested; the menu-bar app, dashboard, and release pipeline are in place.
+
+## License
+
+[MIT](LICENSE). Copyright (c) 2026 Jam-Sw.

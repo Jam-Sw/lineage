@@ -4,7 +4,7 @@
   "description": "Lineage - your GitHub lifetime, live in the menu bar",
   "type": "module",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "engines": {
     "node": ">=22"
   },
