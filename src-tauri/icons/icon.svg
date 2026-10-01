@@ -2,7 +2,7 @@
   <title>Lineage</title>
   <defs>
     <clipPath id="squircle">
-      <rect x="32" y="32" width="960" height="960" rx="200"/>
+      <rect x="100" y="100" width="824" height="824" rx="185"/>
     </clipPath>
     <filter id="grain" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
       <feTurbulence type="fractalNoise" baseFrequency="0.36" numOctaves="2" seed="3" stitchTiles="stitch" result="noise"/>
@@ -23,6 +23,7 @@
   </defs>
 
   <g clip-path="url(#squircle)" filter="url(#grain)">
+    <g transform="translate(72.5333 72.5333) scale(0.858333)">
     <rect x="32" y="32" width="960" height="960" fill="#1664D0"/>
     <polygon points="512,176 884,850 140,850" fill="#081A40"/>
     <polygon points="512,176 744,850 280,850" fill="#12367A"/>
@@ -53,6 +54,7 @@
       <rect x="428" y="224" width="168" height="168" fill="#F3F0E6"/>
       <polygon points="390,170 575,188 528,268 400,278" fill="#F5C400"/>
       <polygon points="548,330 640,290 640,430 455,420" fill="#3A74B8"/>
+    </g>
     </g>
   </g>
 </svg>

@@ -7,6 +7,7 @@ All notable changes to Lineage are recorded here. The format follows
 ## [Unreleased]
 
 ### Fixed
+- The app icon is now the same size as other Jam-Sw app icons; it was drawn about 16% too large.
 
 ## [0.4.0] - 2026-09-29
 
